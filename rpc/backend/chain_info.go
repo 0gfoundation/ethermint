@@ -223,6 +223,15 @@ func (b *Backend) FeeHistory(
 			return nil, err
 		}
 
+		// the eth rpc spec requires a hex string to be returned for these values, so if they are nil then default them to 0x0
+		if oneFeeHistory.BaseFee == nil {
+			oneFeeHistory.BaseFee = big.NewInt(0)
+		}
+
+		if oneFeeHistory.NextBaseFee == nil {
+			oneFeeHistory.NextBaseFee = big.NewInt(0)
+		}
+
 		// copy
 		thisBaseFee[index] = (*hexutil.Big)(oneFeeHistory.BaseFee)
 		thisBaseFee[index+1] = (*hexutil.Big)(oneFeeHistory.NextBaseFee)
