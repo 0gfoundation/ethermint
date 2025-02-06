@@ -17,7 +17,7 @@ import (
 // NewDefaultContext with multile mounted stores
 func NewDBContext(keys []storetypes.StoreKey, tkeys []storetypes.StoreKey) sdk.Context {
 	db := dbm.NewMemDB()
-	cms := store.NewCommitMultiStore(db)
+	cms := store.NewCommitMultiStore(db, log.NewNopLogger())
 
 	for _, key := range keys {
 		cms.MountStoreWithDB(key, storetypes.StoreTypeIAVL, db)

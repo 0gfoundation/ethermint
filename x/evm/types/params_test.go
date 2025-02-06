@@ -39,17 +39,15 @@ func TestParamsValidate(t *testing.T) {
 				EvmDenom:  "stake",
 				ExtraEIPs: []int64{1},
 			},
-			expError: true,
+			true,
 		},
 		{
-			name: "invalid eip",
-			getParams: func() Params {
-				return Params{
-					EvmDenom:  "stake",
-					ExtraEIPs: []int64{1},
-				}
+			"invalid eip",
+			Params{
+				EvmDenom:  "stake",
+				ExtraEIPs: []int64{1},
 			},
-			expError: true,
+			true,
 		},
 	}
 
