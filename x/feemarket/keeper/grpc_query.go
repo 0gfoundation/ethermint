@@ -60,3 +60,13 @@ func (k Keeper) BlockGas(c context.Context, _ *types.QueryBlockGasRequest) (*typ
 		Gas: int64(gas),
 	}, nil
 }
+
+func (k Keeper) SuggestionGasPrice(c context.Context, _ *types.QuerySuggestionGasPriceRequest) (*types.QuerySuggestionGasPriceResponse, error) {
+	ctx := sdk.UnwrapSDKContext(c)
+	gas := k.GetSuggestionGasPrice(ctx)
+
+	gasPrice := sdk.NewIntFromBigInt(gas)
+	return &types.QuerySuggestionGasPriceResponse{
+		GasPrice: &gasPrice,
+	}, nil
+}

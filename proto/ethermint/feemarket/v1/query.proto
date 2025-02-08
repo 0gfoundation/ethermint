@@ -24,6 +24,11 @@ service Query {
   rpc BlockGas(QueryBlockGasRequest) returns (QueryBlockGasResponse) {
     option (google.api.http).get = "/ethermint/feemarket/v1/block_gas";
   }
+
+  // BlockGas queries the gas used at a given block height
+  rpc SuggestionGasPrice(QuerySuggestionGasPriceRequest) returns (QuerySuggestionGasPriceResponse) {
+    option (google.api.http).get = "/ethermint/feemarket/v1/suggestion_gas_price";
+  }
 }
 
 // QueryParamsRequest defines the request type for querying x/evm parameters.
@@ -53,4 +58,13 @@ message QueryBlockGasRequest {}
 message QueryBlockGasResponse {
   // gas is the returned block gas
   int64 gas = 1;
+}
+
+// QuerySuggestionGasPriceRequest defines the request type for querying suggestion gas price.
+message QuerySuggestionGasPriceRequest {}
+
+// QuerySuggestionGasPriceResponse returns suggestion gas price
+message QuerySuggestionGasPriceResponse {
+  // gas is the returned block gas
+  string gas_price = 1 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int"];
 }
