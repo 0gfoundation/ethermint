@@ -402,15 +402,15 @@ func (b *Backend) GasPrice() (*hexutil.Big, error) {
 		err    error
 	)
 
-	result, err = b.suggestGasPrice()
-	if err != nil || result.Cmp(big.NewInt(0)) == 0 {
-		if head := b.CurrentHeader(); head.BaseFee != nil {
-			result, err = b.SuggestGasTipCap(head.BaseFee)
-			if err != nil {
-				return nil, err
-			}
-			result = result.Add(result, head.BaseFee)
-		} else {
+	if head := b.CurrentHeader(); head.BaseFee != nil {
+		result, err = b.SuggestGasTipCap(head.BaseFee)
+		if err != nil {
+			return nil, err
+		}
+		result = result.Add(result, head.BaseFee)
+	} else {
+		result, err = b.suggestGasPrice()
+		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			result = big.NewInt(b.RPCMinGasPrice())
 		}
 	}
