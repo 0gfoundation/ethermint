@@ -27,7 +27,7 @@ import (
 // InitGenesis initializes genesis state based on exported genesis
 func InitGenesis(
 	ctx sdk.Context,
-	k keeper.Keeper,
+	k *keeper.Keeper,
 	data types.GenesisState,
 ) []abci.ValidatorUpdate {
 	err := k.SetParams(ctx, data.Params)
@@ -41,7 +41,7 @@ func InitGenesis(
 }
 
 // ExportGenesis exports genesis state of the fee market module
-func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
+func ExportGenesis(ctx sdk.Context, k *keeper.Keeper) *types.GenesisState {
 	return &types.GenesisState{
 		Params:   k.GetParams(ctx),
 		BlockGas: k.GetBlockGasWanted(ctx),

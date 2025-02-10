@@ -401,6 +401,7 @@ func (b *Backend) GasPrice() (*hexutil.Big, error) {
 		result *big.Int
 		err    error
 	)
+
 	if head := b.CurrentHeader(); head.BaseFee != nil {
 		result, err = b.SuggestGasTipCap(head.BaseFee)
 		if err != nil {
@@ -408,7 +409,10 @@ func (b *Backend) GasPrice() (*hexutil.Big, error) {
 		}
 		result = result.Add(result, head.BaseFee)
 	} else {
-		result = big.NewInt(b.RPCMinGasPrice())
+		result, err = b.suggestGasPrice()
+		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
+			result = big.NewInt(b.RPCMinGasPrice())
+		}
 	}
 
 	// return at least GlobalMinGasPrice from FeeMarket module

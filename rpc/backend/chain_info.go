@@ -309,3 +309,12 @@ func (b *Backend) SuggestGasTipCap(baseFee *big.Int) (*big.Int, error) {
 	}
 	return big.NewInt(maxDelta), nil
 }
+
+func (b *Backend) suggestGasPrice() (*big.Int, error) {
+	resp, err := b.queryClient.FeeMarket.SuggestionGasPrice(b.ctx, &feemarkettypes.QuerySuggestionGasPriceRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.GasPrice.BigInt(), nil
+}

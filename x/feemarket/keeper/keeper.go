@@ -41,12 +41,14 @@ type Keeper struct {
 	authority sdk.AccAddress
 	// Legacy subspace
 	ss paramstypes.Subspace
+
+	suggestionGasPrice *big.Int
 }
 
 // NewKeeper generates new fee market module keeper
 func NewKeeper(
 	cdc codec.BinaryCodec, authority sdk.AccAddress, storeKey, transientKey storetypes.StoreKey, ss paramstypes.Subspace,
-) Keeper {
+) *Keeper {
 	// ensure authority account is correctly formatted
 	if err := sdk.VerifyAddressFormat(authority); err != nil {
 		panic(err)
@@ -56,12 +58,13 @@ func NewKeeper(
 		ss = ss.WithKeyTable(types.ParamKeyTable())
 	}
 
-	return Keeper{
-		cdc:          cdc,
-		storeKey:     storeKey,
-		authority:    authority,
-		transientKey: transientKey,
-		ss:           ss,
+	return &Keeper{
+		cdc:                cdc,
+		storeKey:           storeKey,
+		authority:          authority,
+		transientKey:       transientKey,
+		ss:                 ss,
+		suggestionGasPrice: big.NewInt(0),
 	}
 }
 
@@ -128,4 +131,12 @@ func (k Keeper) GetBaseFeeV1(ctx sdk.Context) *big.Int {
 		return nil
 	}
 	return new(big.Int).SetBytes(bz)
+}
+
+func (k *Keeper) SetSuggestionGasPrice(ctx sdk.Context, gas *big.Int) {
+	k.suggestionGasPrice = big.NewInt(0).Set(gas)
+}
+
+func (k Keeper) GetSuggestionGasPrice(ctx sdk.Context) *big.Int {
+	return k.suggestionGasPrice
 }
