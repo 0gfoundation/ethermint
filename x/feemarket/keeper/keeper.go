@@ -22,6 +22,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	storetypes "github.com/cosmos/cosmos-sdk/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/mempool"
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types"
 
 	"github.com/evmos/ethermint/x/feemarket/types"
@@ -43,12 +44,18 @@ type Keeper struct {
 	ss paramstypes.Subspace
 
 	suggestionGasPrice *big.Int
+
+	mempool mempool.Mempool
 }
 
 // NewKeeper generates new fee market module keeper
 func NewKeeper(
-	cdc codec.BinaryCodec, authority sdk.AccAddress, storeKey, transientKey storetypes.StoreKey, ss paramstypes.Subspace,
-) *Keeper {
+	cdc codec.BinaryCodec,
+	authority sdk.AccAddress,
+	storeKey, transientKey storetypes.StoreKey,
+	ss paramstypes.Subspace,
+	mempool mempool.Mempool,
+) Keeper {
 	// ensure authority account is correctly formatted
 	if err := sdk.VerifyAddressFormat(authority); err != nil {
 		panic(err)
@@ -58,13 +65,14 @@ func NewKeeper(
 		ss = ss.WithKeyTable(types.ParamKeyTable())
 	}
 
-	return &Keeper{
+	return Keeper{
 		cdc:                cdc,
 		storeKey:           storeKey,
 		authority:          authority,
 		transientKey:       transientKey,
 		ss:                 ss,
 		suggestionGasPrice: big.NewInt(0),
+		mempool:            mempool,
 	}
 }
 
@@ -133,10 +141,18 @@ func (k Keeper) GetBaseFeeV1(ctx sdk.Context) *big.Int {
 	return new(big.Int).SetBytes(bz)
 }
 
-func (k *Keeper) SetSuggestionGasPrice(ctx sdk.Context, gas *big.Int) {
-	k.suggestionGasPrice = big.NewInt(0).Set(gas)
+func (k Keeper) SetSuggestionGasPrice(ctx sdk.Context, gas *big.Int) {
+	store := ctx.KVStore(k.storeKey)
+	gasBz := gas.Bytes()
+	store.Set(types.KeyPrefixSuggestionGasPrice, gasBz)
 }
 
 func (k Keeper) GetSuggestionGasPrice(ctx sdk.Context) *big.Int {
-	return k.suggestionGasPrice
+	store := ctx.KVStore(k.storeKey)
+	bz := store.Get(types.KeyPrefixSuggestionGasPrice)
+	if len(bz) == 0 {
+		return big.NewInt(0)
+	}
+
+	return new(big.Int).SetBytes(bz)
 }

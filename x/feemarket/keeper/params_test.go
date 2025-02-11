@@ -5,6 +5,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/testutil"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/mempool"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 	"github.com/evmos/ethermint/app"
@@ -109,7 +110,7 @@ func (suite *KeeperTestSuite) TestLegacyParamsKeyTableRegistration() {
 	suite.Require().False(unregisteredSubspace.HasKeyTable())
 
 	// create a keeper, mimicking an app.go which has not registered the key table
-	k := keeper.NewKeeper(cdc, authtypes.NewModuleAddress("gov"), storeKey, tKey, unregisteredSubspace)
+	k := keeper.NewKeeper(cdc, authtypes.NewModuleAddress("gov"), storeKey, tKey, unregisteredSubspace, mempool.NoOpMempool{})
 
 	// the keeper must set the key table
 	var fetchedParams types.Params
@@ -120,5 +121,7 @@ func (suite *KeeperTestSuite) TestLegacyParamsKeyTableRegistration() {
 	suite.Require().Equal(params, fetchedParams)
 	// ensure we do not attempt to override any existing key tables to keep compatibility
 	// when passing a subpsace to the keeper that has already been used to work with parameters
-	suite.Require().NotPanics(func() { keeper.NewKeeper(cdc, authtypes.NewModuleAddress("gov"), storeKey, tKey, unregisteredSubspace) })
+	suite.Require().NotPanics(func() {
+		keeper.NewKeeper(cdc, authtypes.NewModuleAddress("gov"), storeKey, tKey, unregisteredSubspace, mempool.NoOpMempool{})
+	})
 }

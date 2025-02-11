@@ -27,7 +27,7 @@ import (
 // InitGenesis initializes genesis state based on exported genesis
 func InitGenesis(
 	ctx sdk.Context,
-	k *keeper.Keeper,
+	k keeper.Keeper,
 	data types.GenesisState,
 ) []abci.ValidatorUpdate {
 	err := k.SetParams(ctx, data.Params)

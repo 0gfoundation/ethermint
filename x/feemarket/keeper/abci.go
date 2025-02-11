@@ -17,13 +17,32 @@ package keeper
 
 import (
 	"fmt"
+	"math/big"
+	"reflect"
+	"sort"
 
 	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/evmos/ethermint/x/feemarket/types"
 
 	"github.com/cosmos/cosmos-sdk/telemetry"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/auth/signing"
+	gethtypes "github.com/ethereum/go-ethereum/core/types"
+	evmtypes "github.com/evmos/ethermint/x/evm/types"
 )
+
+const (
+	gasPriceSuggestionBlockNum   int64 = 5
+	GasDenom                           = "ua0gi"
+	GasDenomConversionMultiplier       = 1e12
+)
+
+type txnInfo struct {
+	gasPrice *big.Int
+	gasLimit uint64
+	nonce    uint64
+	sender   string
+}
 
 // BeginBlock updates base fee
 func (k *Keeper) BeginBlock(ctx sdk.Context, req abci.RequestBeginBlock) { //nolint: revive
@@ -53,6 +72,12 @@ func (k *Keeper) BeginBlock(ctx sdk.Context, req abci.RequestBeginBlock) { //nol
 // The EVM end block logic doesn't update the validator set, thus it returns
 // an empty slice.
 func (k *Keeper) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) { //nolint: revive
+	logger := k.Logger(ctx)
+	var maxBlockGas uint64
+	if b := ctx.ConsensusParams().Block; b != nil {
+		maxBlockGas = uint64(b.MaxGas)
+	}
+
 	if ctx.BlockGasMeter() == nil {
 		k.Logger(ctx).Error("block gas meter is nil when setting block gas wanted")
 		return
@@ -79,4 +104,150 @@ func (k *Keeper) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) { //nolint:
 		sdk.NewAttribute("height", fmt.Sprintf("%d", ctx.BlockHeight())),
 		sdk.NewAttribute("amount", fmt.Sprintf("%d", gasWanted)),
 	))
+
+	txnInfoMap := make(map[string][]*txnInfo, k.mempool.CountTx())
+	iterator := k.mempool.Select(ctx, nil)
+
+	for iterator != nil {
+		memTx := iterator.Tx()
+
+		sigs, err := memTx.(signing.SigVerifiableTx).GetSignaturesV2()
+		if err != nil {
+			panic(fmt.Errorf("failed to get signatures: %w", err))
+		}
+
+		if len(sigs) == 0 {
+			msgs := memTx.GetMsgs()
+			if len(msgs) == 1 {
+				msgEthTx, ok := msgs[0].(*evmtypes.MsgEthereumTx)
+				if ok {
+					ethTx := msgEthTx.AsTransaction()
+					signer := gethtypes.NewEIP2930Signer(ethTx.ChainId())
+					ethSender, err := signer.Sender(ethTx)
+					if err == nil {
+						signer := sdk.AccAddress(ethSender.Bytes()).String()
+						nonce := ethTx.Nonce()
+
+						if _, exists := txnInfoMap[signer]; !exists {
+							txnInfoMap[signer] = make([]*txnInfo, 0, 128)
+						}
+
+						txnInfoMap[signer] = append(txnInfoMap[signer], &txnInfo{
+							gasPrice: ethTx.GasPrice(),
+							gasLimit: ethTx.Gas(),
+							nonce:    nonce,
+							sender:   signer,
+						})
+					}
+				}
+			}
+		} else {
+			// ignore multisig case now
+			if fee, ok := memTx.(sdk.FeeTx); ok {
+				if len(sigs) == 1 {
+					signer := sdk.AccAddress(sigs[0].PubKey.Address()).String()
+
+					if _, exists := txnInfoMap[signer]; !exists {
+						txnInfoMap[signer] = make([]*txnInfo, 0, 16)
+					}
+
+					evmGasPrice, err := utilCosmosDemonGasPriceToEvmDemonGasPrice(fee.GetFee())
+
+					if err == nil {
+						txnInfoMap[signer] = append(txnInfoMap[signer], &txnInfo{
+							gasPrice: evmGasPrice,
+							gasLimit: utilCosmosDemonGasLimitToEvmDemonGasLimit(fee.GetGas()),
+							nonce:    sigs[0].Sequence,
+							sender:   signer,
+						})
+					}
+				}
+			} else {
+				logger.Debug("unknown type of memTx: ", "type", reflect.TypeOf(memTx))
+			}
+		}
+
+		iterator = iterator.Next()
+	}
+
+	logger.Debug("mempool size: ", "size", k.mempool.CountTx())
+	if len(txnInfoMap) == 0 {
+		logger.Debug("not found suggestion gas price!")
+		k.SetSuggestionGasPrice(ctx, big.NewInt(0))
+	} else {
+		senderCnt := 0
+		txnCnt := 0
+		for sender := range txnInfoMap {
+			sort.Slice(txnInfoMap[sender], func(i, j int) bool {
+				return txnInfoMap[sender][i].nonce < txnInfoMap[sender][j].nonce
+			})
+			txnCnt += len(txnInfoMap[sender])
+			senderCnt++
+		}
+
+		remaing := gasPriceSuggestionBlockNum * int64(maxBlockGas)
+		var lastProcessedTx *txnInfo
+
+		for remaing > 0 && len(txnInfoMap) > 0 {
+			// Find the highest gas price among the first transaction of each account
+			var highestGasPrice *big.Int
+			var selectedSender string
+
+			// Compare first transaction (lowest nonce) from each account
+			for sender, txns := range txnInfoMap {
+				if len(txns) == 0 {
+					delete(txnInfoMap, sender)
+					continue
+				}
+
+				// First tx has lowest nonce due to earlier sorting
+				if highestGasPrice == nil || txns[0].gasPrice.Cmp(highestGasPrice) > 0 {
+					highestGasPrice = txns[0].gasPrice
+					selectedSender = sender
+				}
+			}
+
+			if selectedSender == "" {
+				break
+			}
+
+			// Process the selected transaction
+			selectedTx := txnInfoMap[selectedSender][0]
+			remaing -= int64(selectedTx.gasLimit)
+			lastProcessedTx = selectedTx
+
+			// Remove processed transaction
+			txnInfoMap[selectedSender] = txnInfoMap[selectedSender][1:]
+			if len(txnInfoMap[selectedSender]) == 0 {
+				delete(txnInfoMap, selectedSender)
+			}
+		}
+
+		if lastProcessedTx != nil && remaing <= 0 {
+			logger.Debug("found suggestion gas price: ", "value", lastProcessedTx.gasPrice.String())
+			k.SetSuggestionGasPrice(ctx, lastProcessedTx.gasPrice)
+		} else {
+			logger.Debug("not found suggestion gas price!")
+			k.SetSuggestionGasPrice(ctx, big.NewInt(0))
+		}
+	}
+}
+
+func utilCosmosDemonGasPriceToEvmDemonGasPrice(gasGroup sdk.Coins) (*big.Int, error) {
+	gasPrice := big.NewInt(0)
+	for _, coin := range gasGroup {
+		if coin.Denom == GasDenom {
+			thisGasPrice := big.NewInt(0).SetUint64(coin.Amount.Uint64())
+			thisGasPrice = thisGasPrice.Mul(thisGasPrice, big.NewInt(0).SetInt64(GasDenomConversionMultiplier))
+			gasPrice = gasPrice.Add(gasPrice, thisGasPrice)
+		} else {
+			return big.NewInt(0), fmt.Errorf("invalid denom: %s", coin.Denom)
+		}
+	}
+
+	return gasPrice, nil
+}
+
+func utilCosmosDemonGasLimitToEvmDemonGasLimit(gasLimit uint64) uint64 {
+	return gasLimit * GasDenomConversionMultiplier
 }
