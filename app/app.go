@@ -248,7 +248,7 @@ type EthermintApp struct {
 
 	// Ethermint keepers
 	EvmKeeper       *evmkeeper.Keeper
-	FeeMarketKeeper *feemarketkeeper.Keeper
+	FeeMarketKeeper feemarketkeeper.Keeper
 
 	// the module manager
 	mm *module.Manager
@@ -425,8 +425,11 @@ func NewEthermintApp(
 	// Create Ethermint keepers
 	feeMarketSs := app.GetSubspace(feemarkettypes.ModuleName)
 	app.FeeMarketKeeper = feemarketkeeper.NewKeeper(
-		appCodec, authtypes.NewModuleAddress(govtypes.ModuleName),
-		keys[feemarkettypes.StoreKey], tkeys[feemarkettypes.TransientKey], feeMarketSs,
+		appCodec,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		keys[feemarkettypes.StoreKey], tkeys[feemarkettypes.TransientKey],
+		feeMarketSs,
+		bApp.Mempool(),
 	)
 
 	// Set authority to x/gov module account to only expect the module account to update params

@@ -35,6 +35,7 @@ const (
 const (
 	prefixBlockGasWanted    = iota + 1
 	deprecatedPrefixBaseFee // unused
+	prefixSuggestionGasPrice
 )
 
 const (
@@ -43,7 +44,8 @@ const (
 
 // KVStore key prefixes
 var (
-	KeyPrefixBlockGasWanted = []byte{prefixBlockGasWanted}
+	KeyPrefixBlockGasWanted     = []byte{prefixBlockGasWanted}
+	KeyPrefixSuggestionGasPrice = []byte{prefixSuggestionGasPrice}
 )
 
 // Transient Store key prefixes
