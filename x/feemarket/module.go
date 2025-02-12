@@ -111,13 +111,13 @@ func (AppModuleBasic) RegisterInterfaces(registry codectypes.InterfaceRegistry) 
 // AppModule implements an application module for the fee market module.
 type AppModule struct {
 	AppModuleBasic
-	keeper keeper.Keeper
+	keeper *keeper.Keeper
 	// legacySubspace is used solely for migration of x/params managed parameters
 	legacySubspace types.Subspace
 }
 
 // NewAppModule creates a new AppModule object
-func NewAppModule(k keeper.Keeper, ss types.Subspace) AppModule {
+func NewAppModule(k *keeper.Keeper, ss types.Subspace) AppModule {
 	return AppModule{
 		AppModuleBasic: AppModuleBasic{},
 		keeper:         k,
@@ -138,7 +138,7 @@ func (am AppModule) RegisterInvariants(_ sdk.InvariantRegistry) {}
 // module-specific GRPC queries and handle the upgrade store migration for the module.
 func (am AppModule) RegisterServices(cfg module.Configurator) {
 	types.RegisterQueryServer(cfg.QueryServer(), am.keeper)
-	types.RegisterMsgServer(cfg.MsgServer(), &am.keeper)
+	types.RegisterMsgServer(cfg.MsgServer(), am.keeper)
 
 	m := keeper.NewMigrator(am.keeper, am.legacySubspace)
 	if err := cfg.RegisterMigration(types.ModuleName, 2, m.Migrate2to3); err != nil {

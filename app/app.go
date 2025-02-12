@@ -248,7 +248,7 @@ type EthermintApp struct {
 
 	// Ethermint keepers
 	EvmKeeper       *evmkeeper.Keeper
-	FeeMarketKeeper feemarketkeeper.Keeper
+	FeeMarketKeeper *feemarketkeeper.Keeper
 
 	// the module manager
 	mm *module.Manager
