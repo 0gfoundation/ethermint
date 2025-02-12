@@ -142,9 +142,13 @@ func (k Keeper) GetBaseFeeV1(ctx sdk.Context) *big.Int {
 }
 
 func (k *Keeper) SetSuggestionGasPrice(ctx sdk.Context, gas *big.Int) {
-	k.suggestionGasPrice = gas
+	logger := k.Logger(ctx)
+	k.suggestionGasPrice = big.NewInt(0).Set(gas)
+	logger.Debug("set suggestion gas price: ", "value", k.suggestionGasPrice.String())
 }
 
-func (k Keeper) GetSuggestionGasPrice(ctx sdk.Context) *big.Int {
+func (k *Keeper) GetSuggestionGasPrice(ctx sdk.Context) *big.Int {
+	logger := k.Logger(ctx)
+	logger.Debug("get suggestion gas price: ", "value", k.suggestionGasPrice.String())
 	return k.suggestionGasPrice
 }

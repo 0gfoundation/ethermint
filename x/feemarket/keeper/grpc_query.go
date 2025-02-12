@@ -24,10 +24,10 @@ import (
 	"github.com/evmos/ethermint/x/feemarket/types"
 )
 
-var _ types.QueryServer = Keeper{}
+var _ types.QueryServer = &Keeper{}
 
 // Params implements the Query/Params gRPC method
-func (k Keeper) Params(c context.Context, _ *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
+func (k *Keeper) Params(c context.Context, _ *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
 	ctx := sdk.UnwrapSDKContext(c)
 	params := k.GetParams(ctx)
 
@@ -37,7 +37,7 @@ func (k Keeper) Params(c context.Context, _ *types.QueryParamsRequest) (*types.Q
 }
 
 // BaseFee implements the Query/BaseFee gRPC method
-func (k Keeper) BaseFee(c context.Context, _ *types.QueryBaseFeeRequest) (*types.QueryBaseFeeResponse, error) {
+func (k *Keeper) BaseFee(c context.Context, _ *types.QueryBaseFeeRequest) (*types.QueryBaseFeeResponse, error) {
 	ctx := sdk.UnwrapSDKContext(c)
 
 	res := &types.QueryBaseFeeResponse{}
@@ -52,7 +52,7 @@ func (k Keeper) BaseFee(c context.Context, _ *types.QueryBaseFeeRequest) (*types
 }
 
 // BlockGas implements the Query/BlockGas gRPC method
-func (k Keeper) BlockGas(c context.Context, _ *types.QueryBlockGasRequest) (*types.QueryBlockGasResponse, error) {
+func (k *Keeper) BlockGas(c context.Context, _ *types.QueryBlockGasRequest) (*types.QueryBlockGasResponse, error) {
 	ctx := sdk.UnwrapSDKContext(c)
 	gas := k.GetBlockGasWanted(ctx)
 
@@ -61,7 +61,7 @@ func (k Keeper) BlockGas(c context.Context, _ *types.QueryBlockGasRequest) (*typ
 	}, nil
 }
 
-func (k Keeper) SuggestionGasPrice(c context.Context, _ *types.QuerySuggestionGasPriceRequest) (*types.QuerySuggestionGasPriceResponse, error) {
+func (k *Keeper) SuggestionGasPrice(c context.Context, _ *types.QuerySuggestionGasPriceRequest) (*types.QuerySuggestionGasPriceResponse, error) {
 	ctx := sdk.UnwrapSDKContext(c)
 	gas := k.GetSuggestionGasPrice(ctx)
 
