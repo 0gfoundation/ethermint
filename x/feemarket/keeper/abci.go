@@ -21,7 +21,6 @@ import (
 	"reflect"
 	"sort"
 
-	"cosmossdk.io/math"
 	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/evmos/ethermint/x/feemarket/types"
 
@@ -154,36 +153,37 @@ func (k *Keeper) foundSuggestionGasPrice(ctx sdk.Context) {
 						}
 					}
 				}
-			} else {
-				// ignore multisig case now
-				if fee, ok := memTx.(sdk.FeeTx); ok {
-					feeCoins := fee.GetFee()
-					if len(feeCoins) != 0 {
-						if len(sigs) == 1 {
-							signer := sdk.AccAddress(sigs[0].PubKey.Address()).String()
+				// ignore cosmos txn case now
+				// } else {
+				// 	// ignore multisig case now
+				// 	if fee, ok := memTx.(sdk.FeeTx); ok {
+				// 		feeCoins := fee.GetFee()
+				// 		if len(feeCoins) != 0 {
+				// 			if len(sigs) == 1 {
+				// 				signer := sdk.AccAddress(sigs[0].PubKey.Address()).String()
 
-							if _, exists := txnInfoMap[signer]; !exists {
-								txnInfoMap[signer] = make([]*txnInfo, 0, 16)
-							}
+				// 				if _, exists := txnInfoMap[signer]; !exists {
+				// 					txnInfoMap[signer] = make([]*txnInfo, 0, 16)
+				// 				}
 
-							gasPrice := sdk.NewDecCoinsFromCoins(fee.GetFee()...).QuoDec(math.LegacyNewDec(int64(fee.GetGas())))
+				// 				gasPrice := sdk.NewDecCoinsFromCoins(fee.GetFee()...).QuoDec(math.LegacyNewDec(int64(fee.GetGas())))
 
-							evmGasPrice, err := utilCosmosDemonGasPriceToEvmDemonGasPrice(gasPrice)
-							evmGasLimit := utilCosmosDemonGasLimitToEvmDemonGasLimit(fee.GetGas())
+				// 				evmGasPrice, err := utilCosmosDemonGasPriceToEvmDemonGasPrice(gasPrice)
+				// 				evmGasLimit := utilCosmosDemonGasLimitToEvmDemonGasLimit(fee.GetGas())
 
-							if err == nil {
-								txnInfoMap[signer] = append(txnInfoMap[signer], &txnInfo{
-									gasPrice: evmGasPrice,
-									gasLimit: evmGasLimit,
-									nonce:    sigs[0].Sequence,
-									sender:   signer,
-								})
-							}
-						}
-					}
-				} else {
-					logger.Error("unknown type of memTx: ", "type", reflect.TypeOf(memTx))
-				}
+				// 				if err == nil {
+				// 					txnInfoMap[signer] = append(txnInfoMap[signer], &txnInfo{
+				// 						gasPrice: evmGasPrice,
+				// 						gasLimit: evmGasLimit,
+				// 						nonce:    sigs[0].Sequence,
+				// 						sender:   signer,
+				// 					})
+				// 				}
+				// 			}
+				// 		}
+				// 	} else {
+				// 		logger.Error("unknown type of memTx: ", "type", reflect.TypeOf(memTx))
+				// 	}
 			}
 
 			iterator = iterator.Next()
