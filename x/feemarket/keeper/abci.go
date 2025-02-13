@@ -102,7 +102,7 @@ func (k *Keeper) EndBlock(ctx sdk.Context, req abci.RequestEndBlock) { //nolint:
 	k.foundSuggestionGasPrice(ctx)
 }
 
-func (k Keeper) foundSuggestionGasPrice(ctx sdk.Context) {
+func (k *Keeper) foundSuggestionGasPrice(ctx sdk.Context) {
 	logger := k.Logger(ctx)
 	var maxBlockGas uint64
 	if b := ctx.ConsensusParams().Block; b != nil {
@@ -153,30 +153,37 @@ func (k Keeper) foundSuggestionGasPrice(ctx sdk.Context) {
 						}
 					}
 				}
-			} else {
-				// ignore multisig case now
-				if fee, ok := memTx.(sdk.FeeTx); ok {
-					if len(sigs) == 1 {
-						signer := sdk.AccAddress(sigs[0].PubKey.Address()).String()
+				// ignore cosmos txn case now
+				// } else {
+				// 	// ignore multisig case now
+				// 	if fee, ok := memTx.(sdk.FeeTx); ok {
+				// 		feeCoins := fee.GetFee()
+				// 		if len(feeCoins) != 0 {
+				// 			if len(sigs) == 1 {
+				// 				signer := sdk.AccAddress(sigs[0].PubKey.Address()).String()
 
-						if _, exists := txnInfoMap[signer]; !exists {
-							txnInfoMap[signer] = make([]*txnInfo, 0, 16)
-						}
+				// 				if _, exists := txnInfoMap[signer]; !exists {
+				// 					txnInfoMap[signer] = make([]*txnInfo, 0, 16)
+				// 				}
 
-						evmGasPrice, err := utilCosmosDemonGasPriceToEvmDemonGasPrice(fee.GetFee())
+				// 				gasPrice := sdk.NewDecCoinsFromCoins(fee.GetFee()...).QuoDec(math.LegacyNewDec(int64(fee.GetGas())))
 
-						if err == nil {
-							txnInfoMap[signer] = append(txnInfoMap[signer], &txnInfo{
-								gasPrice: evmGasPrice,
-								gasLimit: utilCosmosDemonGasLimitToEvmDemonGasLimit(fee.GetGas()),
-								nonce:    sigs[0].Sequence,
-								sender:   signer,
-							})
-						}
-					}
-				} else {
-					logger.Error("unknown type of memTx: ", "type", reflect.TypeOf(memTx))
-				}
+				// 				evmGasPrice, err := utilCosmosDemonGasPriceToEvmDemonGasPrice(gasPrice)
+				// 				evmGasLimit := utilCosmosDemonGasLimitToEvmDemonGasLimit(fee.GetGas())
+
+				// 				if err == nil {
+				// 					txnInfoMap[signer] = append(txnInfoMap[signer], &txnInfo{
+				// 						gasPrice: evmGasPrice,
+				// 						gasLimit: evmGasLimit,
+				// 						nonce:    sigs[0].Sequence,
+				// 						sender:   signer,
+				// 					})
+				// 				}
+				// 			}
+				// 		}
+				// 	} else {
+				// 		logger.Error("unknown type of memTx: ", "type", reflect.TypeOf(memTx))
+				// 	}
 			}
 
 			iterator = iterator.Next()
@@ -246,13 +253,12 @@ func (k Keeper) foundSuggestionGasPrice(ctx sdk.Context) {
 	}
 }
 
-func utilCosmosDemonGasPriceToEvmDemonGasPrice(gasGroup sdk.Coins) (*big.Int, error) {
+func utilCosmosDemonGasPriceToEvmDemonGasPrice(gasGroup sdk.DecCoins) (*big.Int, error) {
 	gasPrice := big.NewInt(0)
 	for _, coin := range gasGroup {
 		if coin.Denom == GasDenom {
-			thisGasPrice := big.NewInt(0).SetUint64(coin.Amount.Uint64())
-			thisGasPrice = thisGasPrice.Mul(thisGasPrice, big.NewInt(0).SetInt64(GasDenomConversionMultiplier))
-			gasPrice = gasPrice.Add(gasPrice, thisGasPrice)
+			thisGasPrice := coin.Amount.MulRoundUp(sdk.NewDec(GasDenomConversionMultiplier))
+			gasPrice = gasPrice.Add(gasPrice, thisGasPrice.TruncateInt().BigInt())
 		} else {
 			return big.NewInt(0), fmt.Errorf("invalid denom: %s", coin.Denom)
 		}

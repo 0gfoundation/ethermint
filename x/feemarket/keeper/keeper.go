@@ -55,7 +55,7 @@ func NewKeeper(
 	storeKey, transientKey storetypes.StoreKey,
 	ss paramstypes.Subspace,
 	mempool mempool.Mempool,
-) Keeper {
+) *Keeper {
 	// ensure authority account is correctly formatted
 	if err := sdk.VerifyAddressFormat(authority); err != nil {
 		panic(err)
@@ -65,7 +65,7 @@ func NewKeeper(
 		ss = ss.WithKeyTable(types.ParamKeyTable())
 	}
 
-	return Keeper{
+	return &Keeper{
 		cdc:                cdc,
 		storeKey:           storeKey,
 		authority:          authority,
@@ -141,18 +141,14 @@ func (k Keeper) GetBaseFeeV1(ctx sdk.Context) *big.Int {
 	return new(big.Int).SetBytes(bz)
 }
 
-func (k Keeper) SetSuggestionGasPrice(ctx sdk.Context, gas *big.Int) {
-	store := ctx.KVStore(k.storeKey)
-	gasBz := gas.Bytes()
-	store.Set(types.KeyPrefixSuggestionGasPrice, gasBz)
+func (k *Keeper) SetSuggestionGasPrice(ctx sdk.Context, gas *big.Int) {
+	logger := k.Logger(ctx)
+	k.suggestionGasPrice = big.NewInt(0).Set(gas)
+	logger.Debug("set suggestion gas price: ", "value", k.suggestionGasPrice.String())
 }
 
-func (k Keeper) GetSuggestionGasPrice(ctx sdk.Context) *big.Int {
-	store := ctx.KVStore(k.storeKey)
-	bz := store.Get(types.KeyPrefixSuggestionGasPrice)
-	if len(bz) == 0 {
-		return big.NewInt(0)
-	}
-
-	return new(big.Int).SetBytes(bz)
+func (k *Keeper) GetSuggestionGasPrice(ctx sdk.Context) *big.Int {
+	logger := k.Logger(ctx)
+	logger.Debug("get suggestion gas price: ", "value", k.suggestionGasPrice.String())
+	return k.suggestionGasPrice
 }
