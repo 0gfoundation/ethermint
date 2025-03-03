@@ -93,6 +93,20 @@ func (b *Backend) getAccountNonce(accAddr common.Address, pending bool, height i
 		return nonce, nil
 	}
 
+	doCnt := false
+
+	accAddrStr := accAddr.Hex()
+	if accAddrStr == "0xc191B74840ad5Ba3777a13f73E3e7339aAacCD13" || accAddrStr == "0x3c854f92f726a7897C8b23f55B2D6e2c482eF3e0" {
+		doCnt = true
+	}
+
+	var counter map[string]int
+
+	if doCnt {
+		counter = make(map[string]int, len(pendingTxs))
+	} else {
+		counter = nil
+	}
 	// add the uncommitted txs to the nonce counter
 	// only supports `MsgEthereumTx` style tx
 	for _, tx := range pendingTxs {
@@ -110,6 +124,36 @@ func (b *Backend) getAccountNonce(accAddr common.Address, pending bool, height i
 			if sender == accAddr {
 				nonce++
 			}
+			if doCnt {
+				if _, exists := counter[sender.Hex()]; !exists {
+					counter[sender.Hex()] = 1
+				} else {
+					counter[sender.Hex()]++
+				}
+			}
+		}
+	}
+
+	if doCnt {
+		type kv struct {
+			k string
+			v int
+		}
+
+		kvSlice := make([]kv, 0, len(counter))
+
+		for k, v := range counter {
+			kvSlice = append(kvSlice, kv{k, v})
+		}
+
+		sort.Slice(kvSlice, func(i, j int) bool {
+			return kvSlice[i].v > kvSlice[j].v
+		})
+
+		logger.Info("uncommitted txs", "count", len(pendingTxs))
+
+		for i := 0; i < 10 && i < len(kvSlice); i++ {
+			logger.Info("uncommitted txs", "top", i+1, "address", kvSlice[i].k, "count", kvSlice[i].v)
 		}
 	}
 
