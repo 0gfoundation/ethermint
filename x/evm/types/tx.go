@@ -23,6 +23,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 )
 
+var CustomPriorityReduction = big.NewInt(1)
+
 // GetTxPriority returns the priority of a given Ethereum tx. It relies of the
 // priority reduction global variable to calculate the tx priority given the tx
 // tip price:
@@ -37,7 +39,7 @@ func GetTxPriority(txData TxData, baseFee *big.Int) (priority int64) {
 	}
 
 	priority = math.MaxInt64
-	priorityBig := new(big.Int).Quo(tipPrice, DefaultPriorityReduction.BigInt())
+	priorityBig := new(big.Int).Quo(tipPrice, CustomPriorityReduction)
 
 	// safety check
 	if priorityBig.IsInt64() {
