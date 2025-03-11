@@ -359,18 +359,24 @@ func (issd EthIncrementSenderSequenceDecorator) AnteHandle(ctx sdk.Context, tx s
 
 		// we merged the nonce verification to nonce increment, so when tx includes multiple messages
 		// with same sender, they'll be accepted.
-		if txData.GetNonce() != nonce {
-			return ctx, errorsmod.Wrapf(
-				errortypes.ErrInvalidSequence,
-				"invalid nonce; got %d, expected %d", txData.GetNonce(), nonce,
-			)
-		}
+		txnNonce := txData.GetNonce()
+		if txnNonce != nonce {
+			if txnNonce > nonce {
+				return ctx, errorsmod.Wrapf(
+					errortypes.ErrInvalidSequence,
+					"invalid nonce; got %d, expected %d", txData.GetNonce(), nonce,
+				)
+			} else {
+				// txn nonce less than account nonce, it is txn replacement, skipping sequence increment
+				ctx.Logger().Info("txn nonce less than account nonce, it is txn replacement, skipping sequence increment")
+			}
+		} else {
+			if err := acc.SetSequence(nonce + 1); err != nil {
+				return ctx, errorsmod.Wrapf(err, "failed to set sequence to %d", acc.GetSequence()+1)
+			}
 
-		if err := acc.SetSequence(nonce + 1); err != nil {
-			return ctx, errorsmod.Wrapf(err, "failed to set sequence to %d", acc.GetSequence()+1)
+			issd.ak.SetAccount(ctx, acc)
 		}
-
-		issd.ak.SetAccount(ctx, acc)
 	}
 
 	return next(ctx, tx, simulate)
