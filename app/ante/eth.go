@@ -348,6 +348,7 @@ func (issd EthIncrementSenderSequenceDecorator) AnteHandle(ctx sdk.Context, tx s
 		}
 
 		// increase sequence of sender
+		sender := msgEthTx.GetFrom().String()
 		acc := issd.ak.GetAccount(ctx, msgEthTx.GetFrom())
 		if acc == nil {
 			return ctx, errorsmod.Wrapf(
@@ -361,22 +362,17 @@ func (issd EthIncrementSenderSequenceDecorator) AnteHandle(ctx sdk.Context, tx s
 		// with same sender, they'll be accepted.
 		txnNonce := txData.GetNonce()
 		if txnNonce != nonce {
-			if txnNonce > nonce {
-				return ctx, errorsmod.Wrapf(
-					errortypes.ErrInvalidSequence,
-					"invalid nonce; got %d, expected %d", txData.GetNonce(), nonce,
-				)
-			} else {
-				// txn nonce less than account nonce, it is txn replacement, skipping sequence increment
-				ctx.Logger().Info("txn nonce less than account nonce, it is txn replacement, skipping sequence increment")
-			}
-		} else {
-			if err := acc.SetSequence(nonce + 1); err != nil {
-				return ctx, errorsmod.Wrapf(err, "failed to set sequence to %d", acc.GetSequence()+1)
-			}
-
-			issd.ak.SetAccount(ctx, acc)
+			return ctx, errorsmod.Wrapf(
+				errortypes.ErrInvalidSequence,
+				"invalid nonce; got %d, expected %d, %s", txData.GetNonce(), nonce, sender,
+			)
 		}
+
+		if err := acc.SetSequence(nonce + 1); err != nil {
+			return ctx, errorsmod.Wrapf(err, "failed to set sequence to %d", acc.GetSequence()+1)
+		}
+
+		issd.ak.SetAccount(ctx, acc)
 	}
 
 	return next(ctx, tx, simulate)
