@@ -142,10 +142,10 @@ func (k *Keeper) foundSuggestionGasPrice(ctx sdk.Context) {
 		})
 
 		if lastGasPrice != nil {
-			logger.Info("found suggestion gas price: ", "value", lastGasPrice.String(), "txCnt", txCnt)
+			logger.Info("found suggestion gas price: ", "value", lastGasPrice.String(), "txCnt", txCnt, "height", ctx.BlockHeader().Height, "mempoolSize", k.mempool.CountTx())
 			k.SetSuggestionGasPrice(ctx, lastGasPrice)
 		} else {
-			logger.Info("not found suggestion gas price!")
+			logger.Info("not found suggestion gas price!", "height", ctx.BlockHeader().Height, "mempoolSize", k.mempool.CountTx())
 			k.SetSuggestionGasPrice(ctx, big.NewInt(0))
 		}
 	}
