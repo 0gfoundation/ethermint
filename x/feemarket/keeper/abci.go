@@ -26,6 +26,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/telemetry"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/mempool"
 	"github.com/cosmos/cosmos-sdk/x/auth/signing"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
 )
@@ -107,47 +108,38 @@ func (k *Keeper) foundSuggestionGasPrice(ctx sdk.Context) {
 	var maxBlockGas uint64
 	if b := ctx.ConsensusParams().Block; b != nil {
 		maxBlockGas = uint64(b.MaxGas)
-
-		iterator := k.mempool.Select(ctx, nil)
-
 		remaing := gasPriceSuggestionBlockNum * int64(maxBlockGas)
 		var lastGasPrice *big.Int
 		txCnt := 0
-		for iterator != nil {
-			memTx := iterator.Tx()
-
+		mempool.SelectBy(ctx.Context(), k.mempool, [][]byte{}, func(memTx sdk.Tx) bool {
 			sigVerifiableTx, ok := memTx.(signing.SigVerifiableTx)
 			if !ok {
 				logger.Error("memTx is not a SigVerifiableTx: ", "type", reflect.TypeOf(memTx))
-				iterator = iterator.Next()
-				continue
-			}
-
-			sigs, err := sigVerifiableTx.GetSignaturesV2()
-			if err != nil {
-				logger.Error("failed to get signatures:", "error=", err)
-				iterator = iterator.Next()
-				continue
-			}
-
-			if len(sigs) == 0 {
-				msgs := memTx.GetMsgs()
-				if len(msgs) == 1 {
-					msgEthTx, ok := msgs[0].(*evmtypes.MsgEthereumTx)
-					if ok {
-						ethTx := msgEthTx.AsTransaction()
-						remaing -= int64(ethTx.Gas())
-						if remaing <= 0 {
-							lastGasPrice = ethTx.GasPrice()
-							break
+			} else {
+				sigs, err := sigVerifiableTx.GetSignaturesV2()
+				if err != nil {
+					logger.Error("failed to get signatures:", "error=", err)
+				} else {
+					if len(sigs) == 0 {
+						msgs := memTx.GetMsgs()
+						if len(msgs) == 1 {
+							msgEthTx, ok := msgs[0].(*evmtypes.MsgEthereumTx)
+							if ok {
+								ethTx := msgEthTx.AsTransaction()
+								remaing -= int64(ethTx.Gas())
+								if remaing <= 0 {
+									lastGasPrice = ethTx.GasPrice()
+									return false
+								}
+								txCnt++
+							}
 						}
-						txCnt++
 					}
 				}
 			}
 
-			iterator = iterator.Next()
-		}
+			return true
+		})
 
 		if lastGasPrice != nil {
 			logger.Info("found suggestion gas price: ", "value", lastGasPrice.String(), "txCnt", txCnt)
