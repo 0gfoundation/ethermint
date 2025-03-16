@@ -20,6 +20,7 @@ import (
 
 	sdkmath "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/mempool"
 
 	"github.com/evmos/ethermint/x/feemarket/types"
 )
@@ -68,5 +69,15 @@ func (k *Keeper) SuggestionGasPrice(c context.Context, _ *types.QuerySuggestionG
 	gasPrice := sdk.NewIntFromBigInt(gas)
 	return &types.QuerySuggestionGasPriceResponse{
 		GasPrice: &gasPrice,
+	}, nil
+}
+
+func (k *Keeper) UncommittedTxnCount(c context.Context, req *types.QueryUncommittedTxnCountRequest) (*types.QueryUncommittedTxnCountResponse, error) {
+	ctx := sdk.UnwrapSDKContext(c)
+
+	cnt := mempool.GetSenderUncommittedTxnCount(ctx, k.mempool, req.Sender)
+
+	return &types.QueryUncommittedTxnCountResponse{
+		Count: int64(cnt),
 	}, nil
 }
