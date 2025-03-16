@@ -29,6 +29,7 @@ import (
 	rpctypes "github.com/evmos/ethermint/rpc/types"
 	ethermint "github.com/evmos/ethermint/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
+	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 )
 
@@ -138,6 +139,22 @@ func (b *Backend) GetBlockReceipts(blockNum rpctypes.BlockNumber) ([]map[string]
 		b.logger.Debug("block not found", "height", blockNum, "error", err.Error())
 		return nil, nil
 	}
+
+	// return if requested block height is greater than the current one
+	if resBlock == nil || resBlock.Block == nil {
+		return nil, nil
+	}
+
+	height := resBlock.Block.Height
+
+	cacheKey := fmt.Sprintf("%d-block-receipts", height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if cachedBlock, found := b.blockCache.cache.Get(cacheKey); found {
+		return cachedBlock.([]map[string]interface{}), nil
+	}
+
 	blockRes, err := b.TendermintBlockResultByNumber(&resBlock.Block.Height)
 	if err != nil {
 		b.logger.Debug("block result not found", "height", resBlock.Block.Height, "error", err.Error())
@@ -261,6 +278,8 @@ func (b *Backend) GetBlockReceipts(blockNum rpctypes.BlockNumber) ([]map[string]
 		}
 		ret[idx] = receipt
 	}
+
+	b.blockCache.cache.Set(cacheKey, ret, cache.DefaultExpiration)
 	return ret, nil
 }
 
