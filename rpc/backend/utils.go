@@ -39,6 +39,7 @@ import (
 	"github.com/cometbft/cometbft/proto/tendermint/crypto"
 	"github.com/evmos/ethermint/rpc/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
+	feemarkettypes "github.com/evmos/ethermint/x/feemarket/types"
 )
 
 type txGasAndReward struct {
@@ -87,33 +88,13 @@ func (b *Backend) getAccountNonce(accAddr common.Address, pending bool, height i
 
 	// the account retriever doesn't include the uncommitted transactions on the nonce so we need to
 	// to manually add them.
-	pendingTxs, err := b.allPendingTransactions()
+	pendingTxnCount, err := b.getUncommittedTxnCount(adr)
 	if err != nil {
-		logger.Error("failed to fetch pending transactions", "error", err.Error())
+		logger.Error("failed to fetch pending transactions count", "error", err.Error())
 		return nonce, nil
 	}
 
-	// add the uncommitted txs to the nonce counter
-	// only supports `MsgEthereumTx` style tx
-	for _, tx := range pendingTxs {
-		for _, msg := range (*tx).GetMsgs() {
-			ethMsg, ok := msg.(*evmtypes.MsgEthereumTx)
-			if !ok {
-				// not ethereum tx
-				break
-			}
-
-			sender, err := ethMsg.GetSender(b.chainID)
-			if err != nil {
-				continue
-			}
-			if sender == accAddr {
-				nonce++
-			}
-		}
-	}
-
-	return nonce, nil
+	return nonce + uint64(pendingTxnCount), nil
 }
 
 // output: targetOneFeeHistory
@@ -308,4 +289,13 @@ func GetHexProofs(proof *crypto.ProofOps) []string {
 		proofs = append(proofs, proof)
 	}
 	return proofs
+}
+
+func (b *Backend) getUncommittedTxnCount(sender string) (int64, error) {
+	resp, err := b.queryClient.FeeMarket.UncommittedTxnCount(b.ctx, &feemarkettypes.QueryUncommittedTxnCountRequest{Sender: sender})
+	if err != nil {
+		return 0, err
+	}
+
+	return resp.Count, nil
 }
