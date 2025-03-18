@@ -211,6 +211,15 @@ func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpc
 		}
 		height = int64(n)
 	}
+
+	cacheKey := fmt.Sprintf("TendermintBlockByNumber-%d", height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if cachedBlock, found := b.blockCache.cache.Get(cacheKey); found {
+		return cachedBlock.(*tmrpctypes.ResultBlock), nil
+	}
+
 	resBlock, err := b.clientCtx.Client.Block(b.ctx, &height)
 	if err != nil {
 		b.logger.Debug("tendermint client failed to get block", "height", height, "error", err.Error())
@@ -221,6 +230,8 @@ func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpc
 		b.logger.Debug("TendermintBlockByNumber block not found", "height", height)
 		return nil, nil
 	}
+
+	b.blockCache.cache.Set(cacheKey, resBlock, cache.DefaultExpiration)
 
 	return resBlock, nil
 }
