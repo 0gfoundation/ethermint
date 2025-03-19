@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"time"
 
 	tmrpcclient "github.com/cometbft/cometbft/rpc/client"
 	tmrpctypes "github.com/cometbft/cometbft/rpc/core/types"
@@ -250,6 +251,15 @@ func (b *Backend) TendermintBlockResultByNumber(height *int64) (*tmrpctypes.Resu
 
 // TendermintBlockByHash returns a Tendermint-formatted block by block number
 func (b *Backend) TendermintBlockByHash(blockHash common.Hash) (*tmrpctypes.ResultBlock, error) {
+	cacheKey := fmt.Sprintf("TendermintBlockByHash-%s", blockHash.Hex())
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if result, found := b.blockCache.cache.Get(cacheKey); found {
+		res := result.(tmrpctypes.ResultBlock)
+		return &res, nil
+	}
+
 	sc, ok := b.clientCtx.Client.(tmrpcclient.SignClient)
 	if !ok {
 		b.logger.Error("invalid rpc client")
@@ -265,7 +275,14 @@ func (b *Backend) TendermintBlockByHash(blockHash common.Hash) (*tmrpctypes.Resu
 		b.logger.Debug("TendermintBlockByHash block not found", "blockHash", blockHash.Hex())
 		return nil, nil
 	}
+	newCacheData := tmrpctypes.ResultBlock{
+		BlockID: resBlock.BlockID,
+		// save pointer directly, because the pointer points data is created by BlockByHash, not reference from somewhere.
+		// but it will cause pressure on memory management
+		Block: resBlock.Block,
+	}
 
+	b.blockCache.cache.Set(cacheKey, newCacheData, time.Minute)
 	return resBlock, nil
 }
 

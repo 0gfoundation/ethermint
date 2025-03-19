@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"math/big"
 
 	errorsmod "cosmossdk.io/errors"
@@ -32,10 +33,13 @@ import (
 	rpctypes "github.com/evmos/ethermint/rpc/types"
 	ethermint "github.com/evmos/ethermint/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
+	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+var crc32c = crc32.MakeTable(crc32.Castagnoli)
 
 // Resend accepts an existing transaction and a new gas price and limit. It will remove
 // the given transaction from the pool and reinsert it with the new gas price and limit.
@@ -306,6 +310,11 @@ func (b *Backend) SetTxDefaults(args evmtypes.TransactionArgs) (evmtypes.Transac
 
 // EstimateGas returns an estimate of gas usage for the given smart contract call.
 func (b *Backend) EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rpctypes.BlockNumber) (hexutil.Uint64, error) {
+	type resultTuple struct {
+		resp evmtypes.EstimateGasResponse
+		err  error
+	}
+
 	blockNr := rpctypes.EthPendingBlockNumber
 	if blockNrOptional != nil {
 		blockNr = *blockNrOptional
@@ -329,13 +338,45 @@ func (b *Backend) EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rp
 		ChainId:         b.chainID.Int64(),
 	}
 
+	crc := crc32.Checksum(bz, crc32c)
+	length := uint32(len(bz))
+
+	cacheKey := fmt.Sprintf("EstimateGas-%d-%d-%d", crc, length, header.Block.Height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if result, found := b.blockCache.cache.Get(cacheKey); found {
+		b.logger.Info("EstimateGas result found in cache", "key", cacheKey)
+		res := result.(resultTuple)
+		if res.err != nil {
+			return 0, res.err
+		}
+
+		return hexutil.Uint64(res.resp.Gas), nil
+	}
+
 	// From ContextWithHeight: if the provided height is 0,
 	// it will return an empty context and the gRPC query will use
 	// the latest block height for querying.
 	res, err := b.queryClient.EstimateGas(rpctypes.ContextWithHeight(blockNr.Int64()), &req)
+
+	// cahce result
+	newResultTuple := resultTuple{
+		err: err,
+	}
+
+	if res != nil {
+		newResultTuple.resp = evmtypes.EstimateGasResponse{
+			Gas: res.Gas,
+		}
+	}
+
+	b.blockCache.cache.Set(cacheKey, newResultTuple, cache.DefaultExpiration)
+
 	if err != nil {
 		return 0, err
 	}
+
 	return hexutil.Uint64(res.Gas), nil
 }
 
@@ -344,6 +385,10 @@ func (b *Backend) EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rp
 func (b *Backend) DoCall(
 	args evmtypes.TransactionArgs, blockNr rpctypes.BlockNumber,
 ) (*evmtypes.MsgEthereumTxResponse, error) {
+	type resultTuple struct {
+		resp evmtypes.MsgEthereumTxResponse
+		err  error
+	}
 	bz, err := json.Marshal(&args)
 	if err != nil {
 		return nil, err
@@ -359,6 +404,29 @@ func (b *Backend) DoCall(
 		GasCap:          b.RPCGasCap(),
 		ProposerAddress: sdk.ConsAddress(header.Block.ProposerAddress),
 		ChainId:         b.chainID.Int64(),
+	}
+
+	crc := crc32.Checksum(bz, crc32c)
+	length := uint32(len(bz))
+
+	cacheKey := fmt.Sprintf("DoCall-%d-%d-%d", crc, length, header.Block.Height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if result, found := b.blockCache.cache.Get(cacheKey); found {
+		b.logger.Info("DoCall result found in cache", "key", cacheKey)
+		res := result.(resultTuple)
+		if res.err != nil {
+			return nil, res.err
+		}
+		if res.resp.Failed() {
+			if res.resp.VmError != vm.ErrExecutionReverted.Error() {
+				return nil, status.Error(codes.Internal, res.resp.VmError)
+			}
+			return nil, evmtypes.NewExecErrorWithReason(res.resp.Ret)
+		}
+
+		return &res.resp, nil
 	}
 
 	// From ContextWithHeight: if the provided height is 0,
@@ -381,6 +449,24 @@ func (b *Backend) DoCall(
 	defer cancel()
 
 	res, err := b.queryClient.EthCall(ctx, &req)
+	// cahce result
+	newResultTuple := resultTuple{
+		err: err,
+	}
+
+	if res != nil {
+		newResultTuple.resp = evmtypes.MsgEthereumTxResponse{
+			VmError: res.VmError,
+			GasUsed: res.GasUsed,
+			Hash:    res.Hash,
+		}
+
+		newResultTuple.resp.Ret = make([]byte, len(res.Ret))
+		copy(newResultTuple.resp.Ret, res.Ret)
+	}
+
+	b.blockCache.cache.Set(cacheKey, newResultTuple, cache.DefaultExpiration)
+
 	if err != nil {
 		return nil, err
 	}
