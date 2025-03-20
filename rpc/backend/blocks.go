@@ -43,6 +43,14 @@ import (
 // the client to use the latest block number in abci app state than tendermint
 // rpc.
 func (b *Backend) BlockNumber() (hexutil.Uint64, error) {
+	secNowAt := time.Now().Unix()
+	cacheKey := fmt.Sprintf("BlockNumber-%d", secNowAt)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+	if cachedHeight, found := b.blockCache.cache.Get(cacheKey); found {
+		return cachedHeight.(hexutil.Uint64), nil
+	}
+
 	// do any grpc query, ignore the response and use the returned block height
 	var header metadata.MD
 	_, err := b.queryClient.Params(b.ctx, &evmtypes.QueryParamsRequest{}, grpc.Header(&header))
@@ -60,7 +68,10 @@ func (b *Backend) BlockNumber() (hexutil.Uint64, error) {
 		return 0, fmt.Errorf("failed to parse block height: %w", err)
 	}
 
-	return hexutil.Uint64(height), nil
+	resultHeight := hexutil.Uint64(height)
+	b.blockCache.cache.Set(cacheKey, resultHeight, time.Second*2)
+
+	return resultHeight, nil
 }
 
 // lock a cache key to prevent concurrent access to the same key
