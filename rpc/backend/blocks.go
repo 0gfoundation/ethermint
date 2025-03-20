@@ -214,6 +214,11 @@ func (b *Backend) GetBlockTransactionCount(block *tmrpctypes.ResultBlock) *hexut
 // TendermintBlockByNumber returns a Tendermint-formatted block for a given
 // block number
 func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpctypes.ResultBlock, error) {
+	type cachedResult struct {
+		blk *tmrpctypes.ResultBlock
+		err error
+	}
+
 	height := blockNum.Int64()
 	if height <= 0 {
 		// fetch the latest block number from the app state, more accurate than the tendermint block store state.
@@ -228,22 +233,31 @@ func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpc
 	b.blockCache.LockCacheKey(cacheKey)
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 
-	if cachedBlock, found := b.blockCache.cache.Get(cacheKey); found {
-		return cachedBlock.(*tmrpctypes.ResultBlock), nil
+	if cached, found := b.blockCache.cache.Get(cacheKey); found {
+		result := cached.(cachedResult)
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.blk.Block == nil {
+			return nil, nil
+		}
+		return result.blk, nil
 	}
 
 	resBlock, err := b.clientCtx.Client.Block(b.ctx, &height)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedResult{err: err, blk: nil}, time.Second)
 		b.logger.Debug("tendermint client failed to get block", "height", height, "error", err.Error())
 		return nil, err
 	}
 
 	if resBlock.Block == nil {
+		b.blockCache.cache.Set(cacheKey, cachedResult{err: nil, blk: nil}, time.Second)
 		b.logger.Debug("TendermintBlockByNumber block not found", "height", height)
 		return nil, nil
 	}
 
-	b.blockCache.cache.Set(cacheKey, resBlock, cache.DefaultExpiration)
+	b.blockCache.cache.Set(cacheKey, cachedResult{err: nil, blk: resBlock}, cache.DefaultExpiration)
 
 	return resBlock, nil
 }

@@ -326,29 +326,46 @@ func (b *Backend) GetBlockReceipts(blockNum rpctypes.BlockNumber) ([]map[string]
 
 // GetTransactionReceipt returns the transaction receipt identified by hash.
 func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{}, error) {
+	type cachedData struct {
+		data map[string]interface{}
+		err  error
+	}
 	hexTx := hash.Hex()
 	b.logger.Debug("eth_getTransactionReceipt", "hash", hexTx)
 
+	cacheKey := fmt.Sprintf("GetTransactionReceipt-%s", hexTx)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+	if cachedTx, found := b.blockCache.cache.Get(cacheKey); found {
+		txResp := cachedTx.(cachedData)
+		return txResp.data, txResp.err
+	}
+
 	res, err := b.GetTxByEthHash(hash)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
 		b.logger.Debug("tx not found", "hash", hexTx, "error", err.Error())
 		return nil, nil
 	}
 
 	resBlock, err := b.TendermintBlockByNumber(rpctypes.BlockNumber(res.Height))
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
 		b.logger.Debug("block not found", "height", res.Height, "error", err.Error())
 		return nil, nil
 	}
 	tx, err := b.clientCtx.TxConfig.TxDecoder()(resBlock.Block.Txs[res.TxIndex])
 	if err != nil {
+		err := fmt.Errorf("failed to decode tx: %w", err)
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		b.logger.Debug("decoding failed", "error", err.Error())
-		return nil, fmt.Errorf("failed to decode tx: %w", err)
+		return nil, err
 	}
 	ethMsg := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
 
 	txData, err := evmtypes.UnpackTxData(ethMsg.Data)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		b.logger.Error("failed to unpack tx data", "error", err.Error())
 		return nil, err
 	}
@@ -356,6 +373,7 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 	cumulativeGasUsed := uint64(0)
 	blockRes, err := b.TendermintBlockResultByNumber(&res.Height)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
 		b.logger.Debug("failed to retrieve block results", "height", res.Height, "error", err.Error())
 		return nil, nil
 	}
@@ -373,11 +391,13 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 
 	chainID, err := b.ChainID()
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		return nil, err
 	}
 
 	from, err := ethMsg.GetSender(chainID.ToInt())
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		return nil, err
 	}
 
@@ -445,6 +465,8 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 			receipt["effectiveGasPrice"] = hexutil.Big(*dynamicTx.EffectiveGasPrice(baseFee))
 		}
 	}
+
+	b.blockCache.cache.Set(cacheKey, cachedData{receipt, nil}, time.Minute)
 
 	return receipt, nil
 }
