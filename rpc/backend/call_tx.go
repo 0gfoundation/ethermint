@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math/big"
+	"time"
 
 	errorsmod "cosmossdk.io/errors"
 	"github.com/cosmos/cosmos-sdk/client/flags"
@@ -33,7 +34,6 @@ import (
 	rpctypes "github.com/evmos/ethermint/rpc/types"
 	ethermint "github.com/evmos/ethermint/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -346,7 +346,7 @@ func (b *Backend) EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rp
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 
 	if result, found := b.blockCache.cache.Get(cacheKey); found {
-		b.logger.Info("EstimateGas result found in cache", "key", cacheKey)
+		b.logger.Debug("EstimateGas result found in cache", "key", cacheKey)
 		res := result.(resultTuple)
 		if res.err != nil {
 			return 0, res.err
@@ -371,7 +371,7 @@ func (b *Backend) EstimateGas(args evmtypes.TransactionArgs, blockNrOptional *rp
 		}
 	}
 
-	b.blockCache.cache.Set(cacheKey, newResultTuple, cache.DefaultExpiration)
+	b.blockCache.cache.Set(cacheKey, newResultTuple, time.Minute)
 
 	if err != nil {
 		return 0, err
@@ -414,7 +414,7 @@ func (b *Backend) DoCall(
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 
 	if result, found := b.blockCache.cache.Get(cacheKey); found {
-		b.logger.Info("DoCall result found in cache", "key", cacheKey)
+		b.logger.Debug("DoCall result found in cache", "key", cacheKey)
 		res := result.(resultTuple)
 		if res.err != nil {
 			return nil, res.err
@@ -465,7 +465,7 @@ func (b *Backend) DoCall(
 		copy(newResultTuple.resp.Ret, res.Ret)
 	}
 
-	b.blockCache.cache.Set(cacheKey, newResultTuple, cache.DefaultExpiration)
+	b.blockCache.cache.Set(cacheKey, newResultTuple, time.Minute)
 
 	if err != nil {
 		return nil, err
