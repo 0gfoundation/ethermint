@@ -17,6 +17,7 @@ package eth
 
 import (
 	"context"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 
@@ -348,11 +349,14 @@ func (e *PublicAPI) FeeHistory(blockCount rpc.DecimalOrHex,
 func (e *PublicAPI) MaxPriorityFeePerGas() (*hexutil.Big, error) {
 	e.logger.Debug("eth_maxPriorityFeePerGas")
 	head := e.backend.CurrentHeader()
-	tipcap, err := e.backend.SuggestGasTipCap(head.BaseFee)
-	if err != nil {
-		return nil, err
+	if head != nil {
+		tipcap, err := e.backend.SuggestGasTipCap(head.BaseFee)
+		if err != nil {
+			return nil, err
+		}
+		return (*hexutil.Big)(tipcap), nil
 	}
-	return (*hexutil.Big)(tipcap), nil
+	return (*hexutil.Big)(big.NewInt(0)), nil
 }
 
 // ChainId is the EIP-155 replay-protection chain id for the current ethereum chain config.

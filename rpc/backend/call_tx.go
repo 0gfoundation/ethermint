@@ -488,7 +488,7 @@ func (b *Backend) GasPrice() (*hexutil.Big, error) {
 		err    error
 	)
 
-	if head := b.CurrentHeader(); head.BaseFee != nil {
+	if head := b.CurrentHeader(); head != nil && head.BaseFee != nil {
 		result, err = b.SuggestGasTipCap(head.BaseFee)
 		if err != nil {
 			return nil, err
