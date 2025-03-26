@@ -268,7 +268,12 @@ func (e *PublicAPI) GetStorageAt(address common.Address, key string, blockNrOrHa
 // GetCode returns the contract code at the given address and block number.
 func (e *PublicAPI) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNumberOrHash) (hexutil.Bytes, error) {
 	e.logger.Debug("eth_getCode", "address", address.Hex(), "block number or hash", blockNrOrHash)
-	return e.backend.GetCode(address, blockNrOrHash)
+	res, err := e.backend.GetCode(address, blockNrOrHash)
+	if err != nil {
+		e.logger.Error("eth_getCode", "address", address.Hex(), "block number or hash", blockNrOrHash, "error", err.Error())
+		return nil, err
+	}
+	return (hexutil.Bytes)(res), nil
 }
 
 // GetProof returns an account object with proof and any storage proofs
@@ -297,6 +302,7 @@ func (e *PublicAPI) Call(args evmtypes.TransactionArgs,
 	}
 	data, err := e.backend.DoCall(args, blockNum)
 	if err != nil {
+		e.logger.Error("eth_call", "args", args.String(), "block number or hash", blockNrOrHash, "error", err.Error())
 		return []byte{}, err
 	}
 
