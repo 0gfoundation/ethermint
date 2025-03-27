@@ -27,11 +27,24 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	rpctypes "github.com/evmos/ethermint/rpc/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
+	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 )
 
 // GetCode returns the contract code at the given address and block number.
 func (b *Backend) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNumberOrHash) (hexutil.Bytes, error) {
+	type holder struct {
+		data []byte
+	}
+	cacheKey := fmt.Sprintf("GetCode-%s-%d", address, blockNrOrHash.BlockNumber.Int64())
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if cached, found := b.blockCache.cache.Get(cacheKey); found {
+		cachedData := cached.(holder)
+		return cachedData.data, nil
+	}
+
 	blockNum, err := b.BlockNumberFromTendermint(blockNrOrHash)
 	if err != nil {
 		return nil, err
@@ -45,6 +58,8 @@ func (b *Backend) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNu
 	if err != nil {
 		return nil, err
 	}
+
+	b.blockCache.cache.Set(cacheKey, holder{data: res.Code}, cache.DefaultExpiration)
 
 	return res.Code, nil
 }

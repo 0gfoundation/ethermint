@@ -348,6 +348,7 @@ func (issd EthIncrementSenderSequenceDecorator) AnteHandle(ctx sdk.Context, tx s
 		}
 
 		// increase sequence of sender
+		sender := msgEthTx.GetFrom().String()
 		acc := issd.ak.GetAccount(ctx, msgEthTx.GetFrom())
 		if acc == nil {
 			return ctx, errorsmod.Wrapf(
@@ -359,10 +360,11 @@ func (issd EthIncrementSenderSequenceDecorator) AnteHandle(ctx sdk.Context, tx s
 
 		// we merged the nonce verification to nonce increment, so when tx includes multiple messages
 		// with same sender, they'll be accepted.
-		if txData.GetNonce() != nonce {
+		txnNonce := txData.GetNonce()
+		if txnNonce != nonce {
 			return ctx, errorsmod.Wrapf(
 				errortypes.ErrInvalidSequence,
-				"invalid nonce; got %d, expected %d", txData.GetNonce(), nonce,
+				"invalid nonce; got %d, expected %d, %s", txData.GetNonce(), nonce, sender,
 			)
 		}
 

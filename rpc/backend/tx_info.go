@@ -17,6 +17,7 @@ package backend
 
 import (
 	"fmt"
+	"time"
 
 	errorsmod "cosmossdk.io/errors"
 	tmrpcclient "github.com/cometbft/cometbft/rpc/client"
@@ -29,36 +30,67 @@ import (
 	rpctypes "github.com/evmos/ethermint/rpc/types"
 	ethermint "github.com/evmos/ethermint/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
+	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 )
 
 // GetTransactionByHash returns the Ethereum format transaction identified by Ethereum transaction hash
 func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransaction, error) {
+	type cachedData struct {
+		data *rpctypes.RPCTransaction
+		err  error
+	}
+	cacheKey := fmt.Sprintf("GetTransactionByHash-%s", txHash.Hex())
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+	if cachedTx, found := b.blockCache.cache.Get(cacheKey); found {
+		txResp := cachedTx.(cachedData)
+		return txResp.data, txResp.err
+	}
+
 	res, err := b.GetTxByEthHash(txHash)
 	hexTx := txHash.Hex()
 
 	if err != nil {
-		return b.getTransactionByHashPending(txHash)
+		txResp, err := b.getTransactionByHashPending(txHash)
+		if err != nil {
+			b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
+			return nil, err
+		}
+
+		if txResp != nil {
+			cpy := Copy(txResp)
+			b.blockCache.cache.Set(cacheKey, cachedData{cpy.(*rpctypes.RPCTransaction), nil}, time.Minute)
+
+			return txResp, nil
+		}
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
+		return nil, nil
 	}
 
 	block, err := b.TendermintBlockByNumber(rpctypes.BlockNumber(res.Height))
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		return nil, err
 	}
 
 	tx, err := b.clientCtx.TxConfig.TxDecoder()(block.Block.Txs[res.TxIndex])
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		return nil, err
 	}
 
 	// the `res.MsgIndex` is inferred from tx index, should be within the bound.
 	msg, ok := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
 	if !ok {
-		return nil, errors.New("invalid ethereum tx")
+		err := errors.New("invalid ethereum tx")
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
+		return nil, err
 	}
 
 	blockRes, err := b.TendermintBlockResultByNumber(&block.Block.Height)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
 		b.logger.Debug("block result not found", "height", block.Block.Height, "error", err.Error())
 		return nil, nil
 	}
@@ -75,7 +107,9 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 	}
 	// if we still unable to find the eth tx index, return error, shouldn't happen.
 	if res.EthTxIndex == -1 {
-		return nil, errors.New("can't find index of ethereum tx")
+		err := errors.New("can't find index of ethereum tx")
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
+		return nil, err
 	}
 
 	baseFee, err := b.BaseFee(blockRes)
@@ -84,7 +118,7 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 		b.logger.Error("failed to fetch Base Fee from prunned block. Check node prunning configuration", "height", blockRes.Height, "error", err)
 	}
 
-	return rpctypes.NewTransactionFromMsg(
+	txResp, err := rpctypes.NewTransactionFromMsg(
 		msg,
 		common.BytesToHash(block.BlockID.Hash.Bytes()),
 		uint64(res.Height),
@@ -92,6 +126,14 @@ func (b *Backend) GetTransactionByHash(txHash common.Hash) (*rpctypes.RPCTransac
 		baseFee,
 		b.chainID,
 	)
+	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
+		return nil, err
+	}
+
+	cpy := Copy(txResp)
+	b.blockCache.cache.Set(cacheKey, cachedData{cpy.(*rpctypes.RPCTransaction), nil}, time.Minute)
+	return txResp, nil
 }
 
 // getTransactionByHashPending find pending tx from mempool
@@ -138,6 +180,22 @@ func (b *Backend) GetBlockReceipts(blockNum rpctypes.BlockNumber) ([]map[string]
 		b.logger.Debug("block not found", "height", blockNum, "error", err.Error())
 		return nil, nil
 	}
+
+	// return if requested block height is greater than the current one
+	if resBlock == nil || resBlock.Block == nil {
+		return nil, nil
+	}
+
+	height := resBlock.Block.Height
+
+	cacheKey := fmt.Sprintf("%d-block-receipts", height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if cachedBlock, found := b.blockCache.cache.Get(cacheKey); found {
+		return cachedBlock.([]map[string]interface{}), nil
+	}
+
 	blockRes, err := b.TendermintBlockResultByNumber(&resBlock.Block.Height)
 	if err != nil {
 		b.logger.Debug("block result not found", "height", resBlock.Block.Height, "error", err.Error())
@@ -261,34 +319,53 @@ func (b *Backend) GetBlockReceipts(blockNum rpctypes.BlockNumber) ([]map[string]
 		}
 		ret[idx] = receipt
 	}
+
+	b.blockCache.cache.Set(cacheKey, ret, cache.DefaultExpiration)
 	return ret, nil
 }
 
 // GetTransactionReceipt returns the transaction receipt identified by hash.
 func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{}, error) {
+	type cachedData struct {
+		data map[string]interface{}
+		err  error
+	}
 	hexTx := hash.Hex()
 	b.logger.Debug("eth_getTransactionReceipt", "hash", hexTx)
 
+	cacheKey := fmt.Sprintf("GetTransactionReceipt-%s", hexTx)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+	if cachedTx, found := b.blockCache.cache.Get(cacheKey); found {
+		txResp := cachedTx.(cachedData)
+		return txResp.data, txResp.err
+	}
+
 	res, err := b.GetTxByEthHash(hash)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
 		b.logger.Debug("tx not found", "hash", hexTx, "error", err.Error())
 		return nil, nil
 	}
 
 	resBlock, err := b.TendermintBlockByNumber(rpctypes.BlockNumber(res.Height))
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
 		b.logger.Debug("block not found", "height", res.Height, "error", err.Error())
 		return nil, nil
 	}
 	tx, err := b.clientCtx.TxConfig.TxDecoder()(resBlock.Block.Txs[res.TxIndex])
 	if err != nil {
+		err := fmt.Errorf("failed to decode tx: %w", err)
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		b.logger.Debug("decoding failed", "error", err.Error())
-		return nil, fmt.Errorf("failed to decode tx: %w", err)
+		return nil, err
 	}
 	ethMsg := tx.GetMsgs()[res.MsgIndex].(*evmtypes.MsgEthereumTx)
 
 	txData, err := evmtypes.UnpackTxData(ethMsg.Data)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		b.logger.Error("failed to unpack tx data", "error", err.Error())
 		return nil, err
 	}
@@ -296,6 +373,7 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 	cumulativeGasUsed := uint64(0)
 	blockRes, err := b.TendermintBlockResultByNumber(&res.Height)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, nil}, time.Second)
 		b.logger.Debug("failed to retrieve block results", "height", res.Height, "error", err.Error())
 		return nil, nil
 	}
@@ -313,11 +391,13 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 
 	chainID, err := b.ChainID()
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		return nil, err
 	}
 
 	from, err := ethMsg.GetSender(chainID.ToInt())
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedData{nil, err}, time.Second)
 		return nil, err
 	}
 
@@ -385,6 +465,8 @@ func (b *Backend) GetTransactionReceipt(hash common.Hash) (map[string]interface{
 			receipt["effectiveGasPrice"] = hexutil.Big(*dynamicTx.EffectiveGasPrice(baseFee))
 		}
 	}
+
+	b.blockCache.cache.Set(cacheKey, cachedData{receipt, nil}, time.Minute)
 
 	return receipt, nil
 }

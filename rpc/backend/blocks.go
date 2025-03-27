@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"time"
 
 	tmrpcclient "github.com/cometbft/cometbft/rpc/client"
 	tmrpctypes "github.com/cometbft/cometbft/rpc/core/types"
@@ -42,6 +43,14 @@ import (
 // the client to use the latest block number in abci app state than tendermint
 // rpc.
 func (b *Backend) BlockNumber() (hexutil.Uint64, error) {
+	secNowAt := time.Now().Unix()
+	cacheKey := fmt.Sprintf("BlockNumber-%d", secNowAt)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+	if cachedHeight, found := b.blockCache.cache.Get(cacheKey); found {
+		return cachedHeight.(hexutil.Uint64), nil
+	}
+
 	// do any grpc query, ignore the response and use the returned block height
 	var header metadata.MD
 	_, err := b.queryClient.Params(b.ctx, &evmtypes.QueryParamsRequest{}, grpc.Header(&header))
@@ -59,7 +68,10 @@ func (b *Backend) BlockNumber() (hexutil.Uint64, error) {
 		return 0, fmt.Errorf("failed to parse block height: %w", err)
 	}
 
-	return hexutil.Uint64(height), nil
+	resultHeight := hexutil.Uint64(height)
+	b.blockCache.cache.Set(cacheKey, resultHeight, time.Second*2)
+
+	return resultHeight, nil
 }
 
 // lock a cache key to prevent concurrent access to the same key
@@ -202,6 +214,11 @@ func (b *Backend) GetBlockTransactionCount(block *tmrpctypes.ResultBlock) *hexut
 // TendermintBlockByNumber returns a Tendermint-formatted block for a given
 // block number
 func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpctypes.ResultBlock, error) {
+	type cachedResult struct {
+		blk *tmrpctypes.ResultBlock
+		err error
+	}
+
 	height := blockNum.Int64()
 	if height <= 0 {
 		// fetch the latest block number from the app state, more accurate than the tendermint block store state.
@@ -211,16 +228,36 @@ func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpc
 		}
 		height = int64(n)
 	}
+
+	cacheKey := fmt.Sprintf("TendermintBlockByNumber-%d", height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if cached, found := b.blockCache.cache.Get(cacheKey); found {
+		result := cached.(cachedResult)
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.blk.Block == nil {
+			return nil, nil
+		}
+		return result.blk, nil
+	}
+
 	resBlock, err := b.clientCtx.Client.Block(b.ctx, &height)
 	if err != nil {
+		b.blockCache.cache.Set(cacheKey, cachedResult{err: err, blk: nil}, time.Second)
 		b.logger.Debug("tendermint client failed to get block", "height", height, "error", err.Error())
 		return nil, err
 	}
 
 	if resBlock.Block == nil {
+		b.blockCache.cache.Set(cacheKey, cachedResult{err: nil, blk: nil}, time.Second)
 		b.logger.Debug("TendermintBlockByNumber block not found", "height", height)
 		return nil, nil
 	}
+
+	b.blockCache.cache.Set(cacheKey, cachedResult{err: nil, blk: resBlock}, cache.DefaultExpiration)
 
 	return resBlock, nil
 }
@@ -239,6 +276,15 @@ func (b *Backend) TendermintBlockResultByNumber(height *int64) (*tmrpctypes.Resu
 
 // TendermintBlockByHash returns a Tendermint-formatted block by block number
 func (b *Backend) TendermintBlockByHash(blockHash common.Hash) (*tmrpctypes.ResultBlock, error) {
+	cacheKey := fmt.Sprintf("TendermintBlockByHash-%s", blockHash.Hex())
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if result, found := b.blockCache.cache.Get(cacheKey); found {
+		res := result.(tmrpctypes.ResultBlock)
+		return &res, nil
+	}
+
 	sc, ok := b.clientCtx.Client.(tmrpcclient.SignClient)
 	if !ok {
 		b.logger.Error("invalid rpc client")
@@ -254,7 +300,14 @@ func (b *Backend) TendermintBlockByHash(blockHash common.Hash) (*tmrpctypes.Resu
 		b.logger.Debug("TendermintBlockByHash block not found", "blockHash", blockHash.Hex())
 		return nil, nil
 	}
+	newCacheData := tmrpctypes.ResultBlock{
+		BlockID: resBlock.BlockID,
+		// save pointer directly, because the pointer points data is created by BlockByHash, not reference from somewhere.
+		// but it will cause pressure on memory management
+		Block: resBlock.Block,
+	}
 
+	b.blockCache.cache.Set(cacheKey, newCacheData, time.Minute)
 	return resBlock, nil
 }
 

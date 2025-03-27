@@ -25,9 +25,14 @@ service Query {
     option (google.api.http).get = "/ethermint/feemarket/v1/block_gas";
   }
 
-  // BlockGas queries the gas used at a given block height
+  // SuggestionGasPrice queries 
   rpc SuggestionGasPrice(QuerySuggestionGasPriceRequest) returns (QuerySuggestionGasPriceResponse) {
     option (google.api.http).get = "/ethermint/feemarket/v1/suggestion_gas_price";
+  }
+
+  // proxy for app mempool to get uncommited transaction count by sender
+  rpc UncommittedTxnCount(QueryUncommittedTxnCountRequest) returns (QueryUncommittedTxnCountResponse) {
+    option (google.api.http).get = "/ethermint/feemarket/v1/uncommitted_txn_count";
   }
 }
 
@@ -68,3 +73,12 @@ message QuerySuggestionGasPriceResponse {
   // gas is the returned block gas
   string gas_price = 1 [(gogoproto.customtype) = "github.com/cosmos/cosmos-sdk/types.Int"];
 }
+
+message QueryUncommittedTxnCountRequest {
+  string sender = 1;
+}
+
+message QueryUncommittedTxnCountResponse {
+  int64 count = 1;
+}
+

@@ -19,8 +19,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -39,6 +41,7 @@ import (
 	"github.com/cometbft/cometbft/proto/tendermint/crypto"
 	"github.com/evmos/ethermint/rpc/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
+	feemarkettypes "github.com/evmos/ethermint/x/feemarket/types"
 )
 
 type txGasAndReward struct {
@@ -87,33 +90,13 @@ func (b *Backend) getAccountNonce(accAddr common.Address, pending bool, height i
 
 	// the account retriever doesn't include the uncommitted transactions on the nonce so we need to
 	// to manually add them.
-	pendingTxs, err := b.allPendingTransactions()
+	pendingTxnCount, err := b.getUncommittedTxnCount(adr)
 	if err != nil {
-		logger.Error("failed to fetch pending transactions", "error", err.Error())
+		logger.Error("failed to fetch pending transactions count", "error", err.Error())
 		return nonce, nil
 	}
 
-	// add the uncommitted txs to the nonce counter
-	// only supports `MsgEthereumTx` style tx
-	for _, tx := range pendingTxs {
-		for _, msg := range (*tx).GetMsgs() {
-			ethMsg, ok := msg.(*evmtypes.MsgEthereumTx)
-			if !ok {
-				// not ethereum tx
-				break
-			}
-
-			sender, err := ethMsg.GetSender(b.chainID)
-			if err != nil {
-				continue
-			}
-			if sender == accAddr {
-				nonce++
-			}
-		}
-	}
-
-	return nonce, nil
+	return nonce + uint64(pendingTxnCount), nil
 }
 
 // output: targetOneFeeHistory
@@ -308,4 +291,126 @@ func GetHexProofs(proof *crypto.ProofOps) []string {
 		proofs = append(proofs, proof)
 	}
 	return proofs
+}
+
+func (b *Backend) getUncommittedTxnCount(sender string) (int64, error) {
+	resp, err := b.queryClient.FeeMarket.UncommittedTxnCount(b.ctx, &feemarkettypes.QueryUncommittedTxnCountRequest{Sender: sender})
+	if err != nil {
+		return 0, err
+	}
+
+	return resp.Count, nil
+}
+
+// Interface for delegating copy process to type
+type Interface interface {
+	DeepCopy() interface{}
+}
+
+// Iface is an alias to Copy; this exists for backwards compatibility reasons.
+func Iface(iface interface{}) interface{} {
+	return Copy(iface)
+}
+
+// Copy creates a deep copy of whatever is passed to it and returns the copy
+// in an interface{}.  The returned value will need to be asserted to the
+// correct type.
+func Copy(src interface{}) interface{} {
+	if src == nil {
+		return nil
+	}
+
+	// Make the interface a reflect.Value
+	original := reflect.ValueOf(src)
+
+	// Make a copy of the same type as the original.
+	cpy := reflect.New(original.Type()).Elem()
+
+	// Recursively copy the original.
+	copyRecursive(original, cpy)
+
+	// Return the copy as an interface.
+	return cpy.Interface()
+}
+
+// copyRecursive does the actual copying of the interface. It currently has
+// limited support for what it can handle. Add as needed.
+func copyRecursive(original, cpy reflect.Value) {
+	// check for implement deepcopy.Interface
+	if original.CanInterface() {
+		if copier, ok := original.Interface().(Interface); ok {
+			cpy.Set(reflect.ValueOf(copier.DeepCopy()))
+			return
+		}
+	}
+
+	// handle according to original's Kind
+	switch original.Kind() {
+	case reflect.Ptr:
+		// Get the actual value being pointed to.
+		originalValue := original.Elem()
+
+		// if  it isn't valid, return.
+		if !originalValue.IsValid() {
+			return
+		}
+		cpy.Set(reflect.New(originalValue.Type()))
+		copyRecursive(originalValue, cpy.Elem())
+
+	case reflect.Interface:
+		// If this is a nil, don't do anything
+		if original.IsNil() {
+			return
+		}
+		// Get the value for the interface, not the pointer.
+		originalValue := original.Elem()
+
+		// Get the value by calling Elem().
+		copyValue := reflect.New(originalValue.Type()).Elem()
+		copyRecursive(originalValue, copyValue)
+		cpy.Set(copyValue)
+
+	case reflect.Struct:
+		t, ok := original.Interface().(time.Time)
+		if ok {
+			cpy.Set(reflect.ValueOf(t))
+			return
+		}
+		// Go through each field of the struct and copy it.
+		for i := 0; i < original.NumField(); i++ {
+			// The Type's StructField for a given field is checked to see if StructField.PkgPath
+			// is set to determine if the field is exported or not because CanSet() returns false
+			// for settable fields.  I'm not sure why.  -mohae
+			if original.Type().Field(i).PkgPath != "" {
+				continue
+			}
+			copyRecursive(original.Field(i), cpy.Field(i))
+		}
+
+	case reflect.Slice:
+		if original.IsNil() {
+			return
+		}
+		// Make a new slice and copy each element.
+		cpy.Set(reflect.MakeSlice(original.Type(), original.Len(), original.Cap()))
+		for i := 0; i < original.Len(); i++ {
+			copyRecursive(original.Index(i), cpy.Index(i))
+		}
+
+	case reflect.Map:
+		if original.IsNil() {
+			return
+		}
+		cpy.Set(reflect.MakeMap(original.Type()))
+		for _, key := range original.MapKeys() {
+			originalValue := original.MapIndex(key)
+			copyValue := reflect.New(originalValue.Type()).Elem()
+			copyRecursive(originalValue, copyValue)
+			copyKey := Copy(key.Interface())
+			cpy.SetMapIndex(reflect.ValueOf(copyKey), copyValue)
+		}
+
+	default:
+		cpy.Set(original)
+	}
 }
