@@ -161,13 +161,7 @@ func (b *Backend) GetBlockByHash(hash common.Hash, fullTx bool) (map[string]inte
 // GetBlockTransactionCountByHash returns the number of Ethereum transactions in
 // the block identified by hash.
 func (b *Backend) GetBlockTransactionCountByHash(hash common.Hash) *hexutil.Uint {
-	sc, ok := b.clientCtx.Client.(tmrpcclient.SignClient)
-	if !ok {
-		b.logger.Error("invalid rpc client")
-		return nil
-	}
-
-	block, err := sc.BlockByHash(b.ctx, hash.Bytes())
+	block, err := b.TendermintBlockByHash(hash)
 	if err != nil {
 		b.logger.Debug("block not found", "hash", hash.Hex(), "error", err.Error())
 		return nil
