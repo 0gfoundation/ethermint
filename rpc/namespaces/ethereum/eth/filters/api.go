@@ -65,6 +65,8 @@ type Backend interface {
 	RPCFilterCap() int32
 	RPCLogsCap() int32
 	RPCBlockRangeCap() int32
+
+	NewBlockReady(blockNum types.BlockNumber)
 }
 
 // consider a filter inactive if it has not been polled for within deadline
@@ -104,6 +106,10 @@ func NewPublicAPI(logger log.Logger, clientCtx client.Context, tmWSClient *rpccl
 	}
 
 	go api.timeoutLoop()
+
+	if err := api.newHeadsForBackend(); err != nil {
+		panic("failed to subscribe to new heads: " + err.Error())
+	}
 
 	return api
 }
@@ -650,4 +656,35 @@ func (api *PublicFilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 	default:
 		return nil, fmt.Errorf("invalid filter %s type %d", id, f.typ)
 	}
+}
+
+func (api *PublicFilterAPI) newHeadsForBackend() error {
+	headersSub, cancelSubs, err := api.events.SubscribeNewHeads()
+	if err != nil {
+		return err
+	}
+
+	go func(headersCh <-chan coretypes.ResultEvent) {
+		defer cancelSubs()
+		defer func() {
+			headersSub.Unsubscribe(api.events)
+		}()
+
+		for ev := range headersCh {
+			data, ok := ev.Data.(tmtypes.EventDataNewBlockHeader)
+			if !ok {
+				api.logger.Debug("event data type mismatch", "type", fmt.Sprintf("%T", ev.Data))
+				continue
+			}
+
+			baseFee := types.BaseFeeFromEvents(data.ResultBeginBlock.Events)
+
+			header := types.EthHeaderFromTendermint(data.Header, ethtypes.Bloom{}, baseFee)
+			startAt := time.Now()
+			api.backend.NewBlockReady(types.BlockNumber(header.Number.Int64()))
+			api.logger.Info("NewBlockReady done!", "costed", fmt.Sprint(time.Since(startAt).Milliseconds(), "ms"))
+		}
+	}(headersSub.eventCh)
+
+	return err
 }
