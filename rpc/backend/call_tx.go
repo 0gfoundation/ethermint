@@ -390,11 +390,6 @@ func (b *Backend) DoCall(
 		err  error
 	}
 
-	if args.To == nil {
-		// the error message imitates geth behavior
-		return nil, errors.New("header not found")
-	}
-
 	bz, err := json.Marshal(&args)
 	if err != nil {
 		return nil, err
