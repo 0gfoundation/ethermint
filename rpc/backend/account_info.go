@@ -48,7 +48,7 @@ func (b *Backend) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNu
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 
 	if cached, found := b.blockCache.cache.Get(cacheKey); found {
-		b.logger.Info("[DEBUG] GetCode result found in cache", "key", cacheKey)
+		b.logger.Debug("GetCode result found in cache", "key", cacheKey)
 		cachedData := cached.(holder)
 		return cachedData.data, cachedData.err
 	}
@@ -58,13 +58,14 @@ func (b *Backend) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNu
 	}
 
 	res, err := b.queryClient.Code(rpctypes.ContextWithHeight(blockNum.Int64()), req)
-	// cache result
-	b.blockCache.cache.Set(cacheKey, holder{data: res.Code, err: err}, cache.DefaultExpiration)
 
 	if err != nil {
+		// cache result
+		b.blockCache.cache.Set(cacheKey, holder{data: nil, err: err}, cache.DefaultExpiration)
 		return nil, err
 	}
-
+	// cache result
+	b.blockCache.cache.Set(cacheKey, holder{data: res.Code, err: nil}, cache.DefaultExpiration)
 	return res.Code, nil
 }
 
