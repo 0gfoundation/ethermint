@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	rpctypes "github.com/evmos/ethermint/rpc/types"
 	evmtypes "github.com/evmos/ethermint/x/evm/types"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -43,8 +42,7 @@ import (
 // the client to use the latest block number in abci app state than tendermint
 // rpc.
 func (b *Backend) BlockNumber() (hexutil.Uint64, error) {
-	secNowAt := time.Now().Unix()
-	cacheKey := fmt.Sprintf("BlockNumber-%d", secNowAt)
+	cacheKey := "BlockNumber"
 	b.blockCache.LockCacheKey(cacheKey)
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 	if cachedHeight, found := b.blockCache.cache.Get(cacheKey); found {
@@ -69,7 +67,6 @@ func (b *Backend) BlockNumber() (hexutil.Uint64, error) {
 	}
 
 	resultHeight := hexutil.Uint64(height)
-	b.blockCache.cache.Set(cacheKey, resultHeight, time.Second*2)
 
 	return resultHeight, nil
 }
@@ -105,7 +102,7 @@ func (b *Backend) GetBlockByNumber(blockNum rpctypes.BlockNumber, fullTx bool) (
 
 	height := resBlock.Block.Height
 
-	cacheKey := fmt.Sprintf("%d-%t", height, fullTx)
+	cacheKey := fmt.Sprintf("GetBlockByNumber-%d-%t", height, fullTx)
 	b.blockCache.LockCacheKey(cacheKey)
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 
@@ -125,7 +122,7 @@ func (b *Backend) GetBlockByNumber(blockNum rpctypes.BlockNumber, fullTx bool) (
 		return nil, err
 	}
 
-	b.blockCache.cache.Set(cacheKey, res, cache.DefaultExpiration)
+	b.blockCache.cache.Set(cacheKey, res, time.Minute)
 
 	return res, nil
 }
@@ -161,13 +158,7 @@ func (b *Backend) GetBlockByHash(hash common.Hash, fullTx bool) (map[string]inte
 // GetBlockTransactionCountByHash returns the number of Ethereum transactions in
 // the block identified by hash.
 func (b *Backend) GetBlockTransactionCountByHash(hash common.Hash) *hexutil.Uint {
-	sc, ok := b.clientCtx.Client.(tmrpcclient.SignClient)
-	if !ok {
-		b.logger.Error("invalid rpc client")
-		return nil
-	}
-
-	block, err := sc.BlockByHash(b.ctx, hash.Bytes())
+	block, err := b.TendermintBlockByHash(hash)
 	if err != nil {
 		b.logger.Debug("block not found", "hash", hash.Hex(), "error", err.Error())
 		return nil
@@ -214,11 +205,6 @@ func (b *Backend) GetBlockTransactionCount(block *tmrpctypes.ResultBlock) *hexut
 // TendermintBlockByNumber returns a Tendermint-formatted block for a given
 // block number
 func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpctypes.ResultBlock, error) {
-	type cachedResult struct {
-		blk *tmrpctypes.ResultBlock
-		err error
-	}
-
 	height := blockNum.Int64()
 	if height <= 0 {
 		// fetch the latest block number from the app state, more accurate than the tendermint block store state.
@@ -234,30 +220,21 @@ func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpc
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 
 	if cached, found := b.blockCache.cache.Get(cacheKey); found {
-		result := cached.(cachedResult)
-		if result.err != nil {
-			return nil, result.err
-		}
-		if result.blk.Block == nil {
-			return nil, nil
-		}
-		return result.blk, nil
+		b.logger.Debug("TendermintBlockByNumber result found in cache", "key", cacheKey)
+		result := cached.(*tmrpctypes.ResultBlock)
+		return result, nil
 	}
 
 	resBlock, err := b.clientCtx.Client.Block(b.ctx, &height)
 	if err != nil {
-		b.blockCache.cache.Set(cacheKey, cachedResult{err: err, blk: nil}, time.Second)
 		b.logger.Debug("tendermint client failed to get block", "height", height, "error", err.Error())
 		return nil, err
 	}
 
 	if resBlock.Block == nil {
-		b.blockCache.cache.Set(cacheKey, cachedResult{err: nil, blk: nil}, time.Second)
 		b.logger.Debug("TendermintBlockByNumber block not found", "height", height)
 		return nil, nil
 	}
-
-	b.blockCache.cache.Set(cacheKey, cachedResult{err: nil, blk: resBlock}, cache.DefaultExpiration)
 
 	return resBlock, nil
 }
@@ -265,6 +242,18 @@ func (b *Backend) TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpc
 // TendermintBlockResultByNumber returns a Tendermint-formatted block result
 // by block number
 func (b *Backend) TendermintBlockResultByNumber(height *int64) (*tmrpctypes.ResultBlockResults, error) {
+	if height != nil {
+		cacheKey := fmt.Sprintf("TendermintBlockResultByNumber-%d", *height)
+		b.blockCache.LockCacheKey(cacheKey)
+		result, found := b.blockCache.cache.Get(cacheKey)
+		b.blockCache.UnlockCacheKey(cacheKey)
+		if found {
+			b.logger.Debug("TendermintBlockResultByNumber result found in cache", "key", cacheKey)
+			res := result.(*tmrpctypes.ResultBlockResults)
+			return res, nil
+		}
+	}
+
 	sc, ok := b.clientCtx.Client.(tmrpcclient.SignClient)
 	if !ok {
 		b.logger.Error("invalid rpc client")
@@ -281,8 +270,9 @@ func (b *Backend) TendermintBlockByHash(blockHash common.Hash) (*tmrpctypes.Resu
 	defer b.blockCache.UnlockCacheKey(cacheKey)
 
 	if result, found := b.blockCache.cache.Get(cacheKey); found {
-		res := result.(tmrpctypes.ResultBlock)
-		return &res, nil
+		b.logger.Debug("TendermintBlockByHash result found in cache", "key", cacheKey)
+		res := result.(*tmrpctypes.ResultBlock)
+		return res, nil
 	}
 
 	sc, ok := b.clientCtx.Client.(tmrpcclient.SignClient)
@@ -300,14 +290,6 @@ func (b *Backend) TendermintBlockByHash(blockHash common.Hash) (*tmrpctypes.Resu
 		b.logger.Debug("TendermintBlockByHash block not found", "blockHash", blockHash.Hex())
 		return nil, nil
 	}
-	newCacheData := tmrpctypes.ResultBlock{
-		BlockID: resBlock.BlockID,
-		// save pointer directly, because the pointer points data is created by BlockByHash, not reference from somewhere.
-		// but it will cause pressure on memory management
-		Block: resBlock.Block,
-	}
-
-	b.blockCache.cache.Set(cacheKey, newCacheData, time.Minute)
 	return resBlock, nil
 }
 
@@ -603,4 +585,65 @@ func (b *Backend) EthBlockFromTendermintBlock(
 	// TODO: add tx receipts
 	ethBlock := ethtypes.NewBlock(ethHeader, txs, nil, nil, trie.NewStackTrie(nil))
 	return ethBlock, nil
+}
+
+func (b *Backend) updateCacheForBlockNumber(height int64) {
+	cacheKey := "BlockNumber"
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+	b.blockCache.cache.Set(cacheKey, hexutil.Uint64(height), time.Second*10)
+	b.logger.Info("NewBlockReady: updateCacheForBlockNumber", "cacheKey", cacheKey)
+
+}
+
+func (b *Backend) updateCacheForBlockByNumber(height int64) *tmrpctypes.ResultBlock {
+	cacheKey := fmt.Sprintf("TendermintBlockByNumber-%d", height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	resBlock, err := b.clientCtx.Client.Block(b.ctx, &height)
+	if err == nil && resBlock.Block != nil {
+		b.blockCache.cache.Set(cacheKey, resBlock, time.Minute*5)
+		b.logger.Info("NewBlockReady: updateCacheForBlock", "cacheKey", cacheKey)
+		return resBlock
+	}
+	return nil
+}
+
+func (b *Backend) updateCacheForBlockByHash(resBlock *tmrpctypes.ResultBlock) {
+	cacheKey := fmt.Sprintf("TendermintBlockByHash-0x%s", resBlock.BlockID.Hash.String())
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+	b.blockCache.cache.Set(cacheKey, resBlock, time.Minute*5)
+	b.logger.Info("NewBlockReady: updateCacheForBlockByHash", "cacheKey", cacheKey)
+}
+
+func (b *Backend) updateCacheForBlockResultByNumber(height int64) *tmrpctypes.ResultBlockResults {
+	cacheKey := fmt.Sprintf("TendermintBlockResultByNumber-%d", height)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	sc, ok := b.clientCtx.Client.(tmrpcclient.SignClient)
+	if ok {
+		blkRes, err := sc.BlockResults(b.ctx, &height)
+		if err == nil {
+			b.blockCache.cache.Set(cacheKey, blkRes, time.Minute*5)
+			b.logger.Info("NewBlockReady: updateCacheForBlockResultByNumber", "cacheKey", cacheKey)
+			return blkRes
+		}
+	}
+	return nil
+}
+
+func (b *Backend) NewBlockReady(blockNum rpctypes.BlockNumber) {
+	b.logger.Info("NewBlockReady", "height", blockNum.Int64())
+
+	height := blockNum.Int64()
+
+	b.updateCacheForBlockNumber(height)
+	resBlock := b.updateCacheForBlockByNumber(height)
+	if resBlock != nil {
+		b.updateCacheForBlockByHash(resBlock)
+		_ = b.updateCacheForBlockResultByNumber(height)
+	}
 }

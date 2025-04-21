@@ -35,14 +35,7 @@ import (
 func (b *Backend) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNumberOrHash) (hexutil.Bytes, error) {
 	type holder struct {
 		data []byte
-	}
-	cacheKey := fmt.Sprintf("GetCode-%s-%d", address, blockNrOrHash.BlockNumber.Int64())
-	b.blockCache.LockCacheKey(cacheKey)
-	defer b.blockCache.UnlockCacheKey(cacheKey)
-
-	if cached, found := b.blockCache.cache.Get(cacheKey); found {
-		cachedData := cached.(holder)
-		return cachedData.data, nil
+		err  error
 	}
 
 	blockNum, err := b.BlockNumberFromTendermint(blockNrOrHash)
@@ -50,16 +43,27 @@ func (b *Backend) GetCode(address common.Address, blockNrOrHash rpctypes.BlockNu
 		return nil, err
 	}
 
+	cacheKey := fmt.Sprintf("GetCode-%s-%d", address, blockNum)
+	b.blockCache.LockCacheKey(cacheKey)
+	defer b.blockCache.UnlockCacheKey(cacheKey)
+
+	if cached, found := b.blockCache.cache.Get(cacheKey); found {
+		b.logger.Info("[DEBUG] GetCode result found in cache", "key", cacheKey)
+		cachedData := cached.(holder)
+		return cachedData.data, cachedData.err
+	}
+
 	req := &evmtypes.QueryCodeRequest{
 		Address: address.String(),
 	}
 
 	res, err := b.queryClient.Code(rpctypes.ContextWithHeight(blockNum.Int64()), req)
+	// cache result
+	b.blockCache.cache.Set(cacheKey, holder{data: res.Code, err: err}, cache.DefaultExpiration)
+
 	if err != nil {
 		return nil, err
 	}
-
-	b.blockCache.cache.Set(cacheKey, holder{data: res.Code}, cache.DefaultExpiration)
 
 	return res.Code, nil
 }

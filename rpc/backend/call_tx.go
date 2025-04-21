@@ -389,6 +389,7 @@ func (b *Backend) DoCall(
 		resp evmtypes.MsgEthereumTxResponse
 		err  error
 	}
+
 	bz, err := json.Marshal(&args)
 	if err != nil {
 		return nil, err
